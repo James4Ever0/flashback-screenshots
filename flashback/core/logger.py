@@ -3,7 +3,7 @@
 import functools
 import logging
 import time
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, Optional
 
 # Cache of loggers by module name
 _logger_cache: dict = {}
