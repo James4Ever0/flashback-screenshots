@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image
 
@@ -12,26 +13,37 @@ except ImportError:
     HAS_MSS = False
     mss = None  # type: ignore
 
-from flashback.core.logger import get_logger
 from flashback.workers.base import IntervalWorker
-
-logger = get_logger("workers.screenshot")
 
 
 class ScreenshotWorker(IntervalWorker):
-    """Captures screenshots at regular intervals."""
+    """Captures screenshots at regular intervals (runs in separate process)."""
 
-    def __init__(self, **kwargs):
-        config = kwargs.get('config')
-        interval = config.screenshot_interval if config else 60
-        super().__init__(interval_seconds=interval, **kwargs)
-        self.quality = self.config.get("screenshot.quality", 85)
+    def __init__(self, config_path=None, db_path=None):
+        # Don't initialize mss here - do it in run_iteration
+        # Store paths for later initialization
+        self._config_path = config_path
+        self._db_path = db_path
+        self._interval: Optional[int] = None
+        self._quality: Optional[int] = None
+        self.sct = None
+        super().__init__(interval_seconds=60, config_path=config_path, db_path=db_path)
+
+    def _init_resources(self):
+        """Initialize resources in child process."""
+        super()._init_resources()
+
+        # Now we can access self.config
+        self._interval = self.config.screenshot_interval
+        self._quality = self.config.get("screenshot.quality", 85)
+        self.interval_seconds = self._interval
 
         if not HAS_MSS:
             raise RuntimeError("mss not installed. Run: pip install mss")
 
+        # Initialize mss in the child process (not in parent)
         self.sct = mss.mss()
-        logger.info(f"Screenshot worker initialized (interval: {interval}s, quality: {self.quality})")
+        self.logger.info(f"Screenshot worker initialized (interval: {self._interval}s, quality: {self._quality})")
 
     def run_iteration(self):
         """Capture a single screenshot."""
@@ -40,11 +52,13 @@ class ScreenshotWorker(IntervalWorker):
         filename = timestamp.strftime("%Y%m%d_%H%M%S.png")
         filepath = self.config.screenshot_dir / filename
 
-        logger.debug(f"Capturing screenshot: {filename}")
+        self.logger.debug(f"Capturing screenshot: {filename}")
 
         try:
             # Capture screenshot
+            self.logger.debug(f"Available monitor count: {len(self.sct.monitors)}")
             monitor = self.sct.monitors[1]  # Primary monitor
+            self.logger.debug(f"Monitor selected: {monitor}")
             screenshot = self.sct.grab(monitor)
 
             # Save with compression
@@ -53,14 +67,15 @@ class ScreenshotWorker(IntervalWorker):
 
             # Record in database
             self.db.insert_screenshot(timestamp_float, str(filepath))
-            logger.info(f"Captured: {filename}")
-            logger.debug(f"Screenshot saved to: {filepath}")
+            self.logger.info(f"Captured: {filename}")
+            self.logger.debug(f"Screenshot saved to: {filepath}")
         except Exception as e:
-            logger.exception(f"Failed to capture screenshot: {e}")
+            self.logger.exception(f"Failed to capture screenshot: {e}")
 
     def stop(self):
         """Stop the worker and cleanup."""
         super().stop()
-        if hasattr(self, 'sct'):
+        if self.sct:
             self.sct.close()
-            logger.debug("MSS closed")
+            if hasattr(self, 'logger'):
+                self.logger.debug("MSS closed")

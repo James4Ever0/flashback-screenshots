@@ -176,12 +176,18 @@ def setup_logging(
 
 
 def get_log_level_from_verbosity(verbose: int, quiet: bool = False) -> str:
-    """Get log level from verbosity count."""
+    """Get log level from verbosity count.
+
+    Args:
+        verbose: Verbosity level (0=WARNING, 1=INFO, 2=DEBUG, 3+=DEBUG with trace)
+        quiet: If True, return ERROR regardless of verbose
+
+    Returns:
+        Logging level name
+    """
     if quiet:
         return "ERROR"
-    if verbose >= 3:
-        return "DEBUG"
-    elif verbose == 2:
+    if verbose >= 2:
         return "DEBUG"
     elif verbose == 1:
         return "INFO"

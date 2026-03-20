@@ -3,7 +3,6 @@
 from datetime import datetime
 from typing import Optional
 
-from flashback.core.config import Config
 from flashback.workers.base import IntervalWorker
 
 # Platform-specific imports
@@ -21,16 +20,22 @@ except ImportError:
 
 
 class WindowTitleWorker(IntervalWorker):
-    """Tracks the active window title."""
+    """Tracks the active window title (runs in separate process)."""
 
-    def __init__(self, **kwargs):
-        poll_interval = kwargs.get('config', Config()).get(
-            "workers.window_title.poll_interval_seconds", 1
-        ) if 'config' in kwargs else 1
-        super().__init__(interval_seconds=poll_interval, **kwargs)
+    def __init__(self, config_path=None, db_path=None):
+        # Start with default interval, will be updated in _init_resources
+        super().__init__(interval_seconds=1, config_path=config_path, db_path=db_path)
         self.last_window_title: Optional[str] = None
         self.last_screenshot_timestamp: Optional[float] = None
         self._warned_missing_deps = False
+        self._platform = None
+
+    def _init_resources(self):
+        """Initialize resources in child process."""
+        super()._init_resources()
+
+        poll_interval = self.config.get("workers.window_title.poll_interval_seconds", 1)
+        self.interval_seconds = poll_interval
 
         if not HAS_XLIB and not HAS_PYGETWINDOW:
             import platform

@@ -85,38 +85,39 @@ def check_dependencies(config: Any, console: Any) -> bool:
 
 
 def run_workers(config: Any, console: Any) -> None:
-    """Run all enabled workers."""
-    from flashback.core.database import Database
+    """Run all enabled workers (in separate processes)."""
     from flashback.workers.screenshot import ScreenshotWorker
     from flashback.workers.ocr import OCRWorker
     from flashback.workers.embedding import EmbeddingWorker
     from flashback.workers.cleanup import CleanupWorker
     from flashback.workers.window_title import WindowTitleWorker
 
-    db = Database(config.db_path)
+    config_path = str(config._config_path) if hasattr(config, '_config_path') else None
+    db_path = str(config.db_path) if hasattr(config, 'db_path') else None
+
     workers = []
 
     if config.is_worker_enabled("screenshot"):
-        workers.append(ScreenshotWorker(config=config, db=db))
+        workers.append(ScreenshotWorker(config_path=config_path, db_path=db_path))
 
     if config.is_worker_enabled("ocr"):
         try:
-            workers.append(OCRWorker(config=config, db=db))
+            workers.append(OCRWorker(config_path=config_path, db_path=db_path))
         except Exception as e:
             console.print(f"[yellow]Failed to start OCR worker: {e}[/yellow]")
 
     if config.is_worker_enabled("embedding"):
         try:
-            workers.append(EmbeddingWorker(config=config, db=db))
+            workers.append(EmbeddingWorker(config_path=config_path, db_path=db_path))
         except Exception as e:
             console.print(f"[yellow]Failed to start Embedding worker: {e}[/yellow]")
 
     if config.is_worker_enabled("cleanup"):
-        workers.append(CleanupWorker(config=config, db=db))
+        workers.append(CleanupWorker(config_path=config_path, db_path=db_path))
 
     if config.is_worker_enabled("window_title"):
         try:
-            workers.append(WindowTitleWorker(config=config, db=db))
+            workers.append(WindowTitleWorker(config_path=config_path, db_path=db_path))
         except Exception as e:
             console.print(f"[yellow]Failed to start Window Title worker: {e}[/yellow]")
 

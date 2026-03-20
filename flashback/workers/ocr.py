@@ -12,32 +12,36 @@ except ImportError:
     pytesseract = None  # type: ignore
 
 from flashback.core.database import ScreenshotRecord
-from flashback.core.logger import get_logger, timed
+from flashback.core.logger import timed
 from flashback.workers.base import QueueWorker
-
-logger = get_logger("workers.ocr")
 
 
 class OCRWorker(QueueWorker):
-    """Performs OCR on screenshots using Tesseract."""
+    """Performs OCR on screenshots using Tesseract (runs in separate process)."""
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, config_path=None, db_path=None):
+        self._languages = None
+        super().__init__(config_path=config_path, db_path=db_path)
+
+    def _init_resources(self):
+        """Initialize resources in child process."""
+        super()._init_resources()
+
         self.poll_interval = self.config.get("workers.ocr.work_interval_seconds", 1)
         self.batch_size = self.config.get("workers.ocr.batch_size", 5)
-        self.languages = "+".join(self.config.get_ocr_languages())
+        self._languages = "+".join(self.config.get_ocr_languages())
 
         if not HAS_TESSERACT:
             raise RuntimeError(
                 "pytesseract not installed. Run: pip install pytesseract"
             )
 
-        logger.info(f"OCR worker initialized (languages: {self.languages})")
+        self.logger.info(f"OCR worker initialized (languages: {self._languages})")
 
     def get_items(self) -> list:
         """Get screenshots without OCR."""
         items = self.db.get_unprocessed_ocr(limit=self.batch_size * 2)
-        logger.debug(f"Found {len(items)} items needing OCR")
+        self.logger.debug(f"Found {len(items)} items needing OCR")
         return items
 
     @timed("workers.ocr")
@@ -47,16 +51,16 @@ class OCRWorker(QueueWorker):
         timestamp = item.timestamp
         ocr_filename = Path(screenshot_path).stem + ".txt"
 
-        logger.info(f"Processing: {ocr_filename}")
-        logger.debug(f"Timestamp: {timestamp}, Languages: {self.languages}")
+        self.logger.info(f"Processing: {ocr_filename}")
+        self.logger.debug(f"Timestamp: {timestamp}, Languages: {self._languages}")
 
         try:
             # Perform OCR with configured languages
             image = Image.open(screenshot_path)
-            text = pytesseract.image_to_string(image, lang=self.languages)
+            text = pytesseract.image_to_string(image, lang=self._languages)
 
             text_preview = text[:100].replace('\n', ' ') if text else "(empty)"
-            logger.debug(f"OCR result preview: {text_preview}...")
+            self.logger.debug(f"OCR result preview: {text_preview}...")
 
             # Save OCR result
             ocr_path = self.config.ocr_dir / ocr_filename
@@ -64,7 +68,7 @@ class OCRWorker(QueueWorker):
 
             # Update database
             self.db.update_ocr(timestamp, str(ocr_path), text)
-            logger.info(f"Processed: {ocr_filename} ({len(text)} chars)")
+            self.logger.info(f"Processed: {ocr_filename} ({len(text)} chars)")
 
         except Exception as e:
-            logger.exception(f"Failed to process {screenshot_path}: {e}")
+            self.logger.exception(f"Failed to process {screenshot_path}: {e}")

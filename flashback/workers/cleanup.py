@@ -7,10 +7,14 @@ from flashback.workers.base import IntervalWorker
 
 
 class CleanupWorker(IntervalWorker):
-    """Removes old screenshots and database entries."""
+    """Removes old screenshots and database entries (runs in separate process)."""
 
-    def __init__(self, **kwargs):
-        super().__init__(interval_seconds=3600, **kwargs)  # Check every hour
+    def __init__(self, config_path=None, db_path=None):
+        super().__init__(interval_seconds=3600, config_path=config_path, db_path=db_path)
+
+    def _init_resources(self):
+        """Initialize resources in child process."""
+        super()._init_resources()
         self.retention_days = self.config.retention_days
         self.check_interval = self.config.get(
             "workers.cleanup.check_interval_seconds", 3600

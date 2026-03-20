@@ -1,37 +1,41 @@
 """Base worker class for flashback."""
 
 import logging
-import threading
+import multiprocessing
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from flashback.core.config import Config
-from flashback.core.database import Database
-from flashback.core.logger import get_logger, trace_entry_exit
+from flashback.core.logger import get_logger
 
 
-class BaseWorker(threading.Thread, ABC):
-    """Base class for all background workers."""
+class BaseWorker(multiprocessing.Process, ABC):
+    """Base class for all background workers (runs in separate process)."""
 
-    def __init__(self, config: Optional[Config] = None, db: Optional[Database] = None):
+    def __init__(self, config_path: Optional[str] = None, db_path: Optional[str] = None):
         super().__init__(daemon=True)
-        self.config = config or Config()
-        self.db = db or Database(self.config.db_path)
-        self.running = False
-        self._stop_event = threading.Event()
-        self.name = self.__class__.__name__
-        self.logger = get_logger(f"workers.{self.__class__.__name__.lower()}")
+        self.config_path = config_path
+        self.db_path = db_path
+        self._stop_event = multiprocessing.Event()
+        self.worker_name = self.__class__.__name__
 
     def stop(self):
         """Signal the worker to stop."""
-        self.running = False
         self._stop_event.set()
-        self.logger.debug("Stop requested")
 
     def should_stop(self, timeout: Optional[float] = None) -> bool:
         """Check if stop has been requested."""
         return self._stop_event.wait(timeout=timeout)
+
+    def _init_resources(self):
+        """Initialize resources that can't be pickled (called in child process)."""
+        from flashback.core.config import Config
+        from flashback.core.database import Database
+
+        self.config = Config(config_path=self.config_path)
+        self.db = Database(self.db_path or self.config.db_path)
+        self.running = False
+        self.logger = get_logger(f"workers.{self.worker_name.lower()}")
 
     @abstractmethod
     def run_iteration(self):
@@ -39,13 +43,18 @@ class BaseWorker(threading.Thread, ABC):
         pass
 
     def run(self):
-        """Main worker loop."""
+        """Main worker loop (runs in child process)."""
+        # Initialize resources in child process (can't pickle Config/Database)
+        self._init_resources()
+
         self.running = True
-        self.logger.info("Started")
-        self.logger.debug(f"Worker config: {self.config.to_dict()}")
+        self.logger.info(f"Started {self.worker_name}")
 
         iteration = 0
         while self.running:
+            if self._stop_event.is_set():
+                break
+
             iteration += 1
             if iteration % 10 == 0:
                 self.logger.debug(f"Running iteration {iteration}")
@@ -56,7 +65,7 @@ class BaseWorker(threading.Thread, ABC):
                 self.logger.exception(f"Error in iteration {iteration}: {e}")
                 time.sleep(5)  # Back off on error
 
-        self.logger.info("Stopped")
+        self.logger.info(f"Stopped {self.worker_name}")
 
     def get_sleep_interval(self) -> float:
         """Get the sleep interval between iterations. Override in subclasses."""
@@ -66,17 +75,23 @@ class BaseWorker(threading.Thread, ABC):
 class IntervalWorker(BaseWorker, ABC):
     """Worker that runs at fixed intervals."""
 
-    def __init__(self, interval_seconds: float, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, interval_seconds: float, config_path: Optional[str] = None, db_path: Optional[str] = None):
+        super().__init__(config_path=config_path, db_path=db_path)
         self.interval_seconds = interval_seconds
 
     def run(self):
-        """Main worker loop with interval timing."""
+        """Main worker loop with interval timing (runs in child process)."""
+        # Initialize resources in child process
+        self._init_resources()
+
         self.running = True
-        self.logger.info(f"Started (interval: {self.interval_seconds}s)")
+        self.logger.info(f"Started {self.worker_name} (interval: {self.interval_seconds}s)")
 
         iteration = 0
         while self.running:
+            if self._stop_event.is_set():
+                break
+
             iteration += 1
             start_time = time.time()
 
@@ -97,24 +112,30 @@ class IntervalWorker(BaseWorker, ABC):
             if self._stop_event.wait(timeout=sleep_time):
                 break
 
-        self.logger.info("Stopped")
+        self.logger.info(f"Stopped {self.worker_name}")
 
 
 class QueueWorker(BaseWorker, ABC):
     """Worker that processes items from a queue."""
 
-    def __init__(self, poll_interval: float = 1.0, batch_size: int = 1, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, poll_interval: float = 1.0, batch_size: int = 1, config_path: Optional[str] = None, db_path: Optional[str] = None):
+        super().__init__(config_path=config_path, db_path=db_path)
         self.poll_interval = poll_interval
         self.batch_size = batch_size
 
     def run(self):
-        """Main worker loop for queue processing."""
+        """Main worker loop for queue processing (runs in child process)."""
+        # Initialize resources in child process
+        self._init_resources()
+
         self.running = True
-        self.logger.info(f"Started (poll: {self.poll_interval}s, batch: {self.batch_size})")
+        self.logger.info(f"Started {self.worker_name} (poll: {self.poll_interval}s, batch: {self.batch_size})")
 
         iteration = 0
         while self.running:
+            if self._stop_event.is_set():
+                break
+
             iteration += 1
             try:
                 self.logger.debug(f"Fetching items (iteration {iteration})")
@@ -128,7 +149,7 @@ class QueueWorker(BaseWorker, ABC):
 
                 self.logger.debug(f"Processing {len(items)} items")
                 for i, item in enumerate(items[: self.batch_size]):
-                    if not self.running:
+                    if self._stop_event.is_set():
                         break
                     try:
                         self.logger.debug(f"Processing item {i+1}/{min(len(items), self.batch_size)}")
@@ -140,7 +161,7 @@ class QueueWorker(BaseWorker, ABC):
                 self.logger.exception(f"Error in iteration {iteration}: {e}")
                 time.sleep(5)
 
-        self.logger.info("Stopped")
+        self.logger.info(f"Stopped {self.worker_name}")
 
     @abstractmethod
     def get_items(self) -> list:

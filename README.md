@@ -372,19 +372,34 @@ Flashback provides configurable logging for debugging and monitoring.
 
 ### CLI Logging Options
 
+Global verbosity flags can be used with **any** command:
+
 ```bash
-# Global verbosity flags
-flashback serve --verbose           # INFO level
-flashback serve -vv                 # DEBUG level
-flashback serve --trace             # Maximum verbosity (DEBUG + tracing)
-flashback serve --quiet             # Only errors
+# Verbosity levels (cumulative -v flags)
+flashback -v serve                  # INFO level (general progress)
+flashback -vv search "query"        # DEBUG level (detailed diagnostics)
+flashback -vvv status               # TRACE level (function entry/exit)
+
+# Alternative forms
+flashback --verbose serve           # Same as -v
+flashback --debug serve             # Same as -vv
+flashback --trace serve             # Same as -vvv (maximum verbosity)
+flashback --quiet serve             # Only errors (overrides -v)
 
 # Log to file
 flashback serve --log-file /var/log/flashback.log
 
 # Combine options
-flashback serve --daemon --trace --log-file flashback.log
+flashback -vv --log-file flashback.log serve --daemon
 ```
+
+**Verbosity Levels:**
+| Flag | Level | Output |
+|------|-------|--------|
+| (none) | WARNING | Errors and warnings only |
+| `-v` | INFO | General progress messages |
+| `-vv` | DEBUG | Detailed diagnostics |
+| `-vvv` | TRACE | Function entry/exit, maximum detail |
 
 ### Configuration File Logging
 

@@ -26,11 +26,15 @@ def get_console():
     type=click.Path(path_type=Path),
     help="Override data directory",
 )
-@click.option("--verbose", "-v", count=True, help="Increase verbosity (-v, -vv, -vvv)")
-@click.option("--quiet", "-q", is_flag=True, help="Only show errors")
-@click.option("--debug", is_flag=True, help="Enable debug logging (same as -vv)")
-@click.option("--trace", is_flag=True, help="Enable trace logging (maximum verbosity)")
-@click.option("--log-file", type=click.Path(path_type=Path), help="Log to file")
+@click.option(
+    "--verbose", "-v",
+    count=True,
+    help="Increase output verbosity"
+)
+@click.option("--quiet", "-q", is_flag=True, help="Suppress non-error output")
+@click.option("--debug", is_flag=True, hidden=True, help="Enable debug output (same as -vv)")
+@click.option("--trace", is_flag=True, hidden=True, help="Enable trace output (same as -vvv)")
+@click.option("--log-file", type=click.Path(path_type=Path), help="Path to log file")
 @click.version_option(version="0.1.0", prog_name="flashback")
 @click.pass_context
 def cli(ctx, config, data_dir, verbose, quiet, debug, trace, log_file):
@@ -51,33 +55,48 @@ def cli(ctx, config, data_dir, verbose, quiet, debug, trace, log_file):
       logs      View daemon logs
 
     \b
+    Global Options (before COMMAND):
+      -v, --verbose       Increase verbosity (-v=INFO, -vv=DEBUG, -vvv=TRACE)
+      -q, --quiet         Suppress non-error output (overrides -v)
+      --log-file PATH     Write logs to file
+
+    \b
     Examples:
       flashback serve --daemon          # Start backend as daemon
       flashback search "meeting notes"  # Search for text in screenshots
       flashback view 20240320_142312    # View specific screenshot
-      flashback -vv serve              # Start with debug logging
+      flashback -vv serve               # Start with debug logging
     """
     # Setup logging
     from flashback.core.config import Config
     from flashback.core.logging_config import setup_logging, get_log_level_from_verbosity
 
-    if trace:
-        level = "DEBUG"
-    elif debug:
-        level = "DEBUG"
+    # Map verbosity flags: -v=INFO, -vv=DEBUG, -vvv=TRACE
+    # --debug is alias for -vv, --trace is alias for -vvv
+    if quiet:
+        effective_verbose = 0
+    elif trace or verbose >= 3:
+        effective_verbose = 3  # TRACE level
+    elif debug or verbose >= 2:
+        effective_verbose = 2  # DEBUG level
+    elif verbose >= 1:
+        effective_verbose = 1  # INFO level
     else:
-        level = get_log_level_from_verbosity(verbose, quiet)
+        effective_verbose = 0  # WARNING level
+
+    level = get_log_level_from_verbosity(effective_verbose, quiet)
+    enable_trace = effective_verbose >= 3
 
     cfg = Config(config_path=config)
     if data_dir:
         cfg.set("data_dir", str(data_dir))
 
-    setup_logging(cfg, level=level, log_file=str(log_file) if log_file else None, trace=trace)
+    setup_logging(cfg, level=level, log_file=str(log_file) if log_file else None, trace=enable_trace)
 
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config
     ctx.obj["data_dir"] = data_dir
-    ctx.obj["verbose"] = verbose or debug or trace
+    ctx.obj["verbose"] = effective_verbose
 
 
 @cli.command()
