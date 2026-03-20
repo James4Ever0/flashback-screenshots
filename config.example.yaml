@@ -1,0 +1,244 @@
+# Flashback Configuration
+#
+# Config file search order (first found wins):
+#   1. $FLASHBACK_CONFIG environment variable (if set and file exists)
+#   2. ./config.yaml (current directory)
+#   3. ~/.config/flashback/config.yaml (user config directory)
+#
+# To use a custom location:
+#   export FLASHBACK_CONFIG=/path/to/your/config.yaml
+
+# Data storage paths
+data_dir: ~/.local/share/flashback
+
+# Screenshot settings
+screenshot:
+  enabled: true
+  interval_seconds: 60
+  quality: 85
+  formats: ["png"]
+
+# Worker configuration
+workers:
+  screenshot:
+    enabled: true
+
+  ocr:
+    enabled: true
+    work_interval_seconds: 1
+    batch_size: 5
+    # Tesseract language packs to use
+    # Install with: sudo apt-get install tesseract-ocr-<lang>
+    languages: ["eng"]
+
+  embedding:
+    enabled: true
+    work_interval_seconds: 1
+    batch_size: 3
+
+    # Embedding mode: text-only, image-only, text-image-hybrid
+    # - text-only: Only indexes text from OCR content
+    # - image-only: Only indexes image pixels (requires vision-capable model)
+    # - text-image-hybrid: Indexes both separately (most accurate, slower)
+    mode: "text-image-hybrid"
+
+    # TEXT EMBEDDING CONFIGURATION
+    # Requires an OpenAI-compatible embedding API
+    text:
+      base_url: "https://api.openai.com/v1"  # or "http://localhost:11434/v1" for Ollama
+      api_key: "${OPENAI_API_KEY}"  # Environment variable substitution supported
+      model: "text-embedding-3-small"
+      dimension: null  # Auto-detected via: flashback config test-embedding --type text --write
+      extra_headers: {}
+
+    # IMAGE EMBEDDING CONFIGURATION
+    # Requires a vision-capable model that supports image embeddings
+    image:
+      base_url: "http://localhost:11434/v1"  # Ollama default
+      api_key: ""  # Often empty for local APIs
+      model: "llava"  # Vision-capable model (llava, bakllava, etc.)
+      dimension: null  # Auto-detected via: flashback config test-embedding --type image --write
+      extra_headers: {}
+
+    # Hybrid search weights (only used in text-image-hybrid mode)
+    hybrid_weights:
+      text_weight: 0.5
+      image_weight: 0.5
+      rrf_k: 60
+
+  cleanup:
+    enabled: true
+    check_interval_seconds: 3600
+    retention_days: 7
+
+  # Window title worker captures the active window title with each screenshot
+  # This helps you identify which application/window a screenshot came from.
+  #
+  # PLATFORM-SPECIFIC DEPENDENCIES REQUIRED:
+  #   Linux (X11): pip install python-xlib  (or: pip install flashback-screenshots[linux])
+  #   Windows:     pip install pygetwindow pywin32  (or: pip install flashback-screenshots[windows])
+  #   macOS:       Not currently supported
+  #
+  # If the required dependency is not installed, window titles will not be captured,
+  # but screenshots will still be taken normally.
+  window_title:
+    enabled: true
+    poll_interval_seconds: 1
+
+# Search configuration
+search:
+  enabled_methods:
+    bm25: true
+    text_embedding: true
+    image_embedding: true
+
+  bm25:
+    k1: 1.5
+    b: 0.75
+    default_limit: 50
+
+    # Tokenizer backend configuration
+    # Backend options:
+    #   "auto"   - Detect language and use appropriate tokenizer (default)
+    #   "nltk"   - Use NLTK word_tokenize (good for English)
+    #   "jieba"  - Use jieba for Chinese segmentation
+    #   "simple" - Use regex [a-zA-Z0-9]+ (fast, ASCII only)
+    tokenizer:
+      backend: "auto"
+
+      # For auto mode: threshold to detect Chinese text
+      # If >70% Chinese characters, uses jieba; otherwise nltk
+      language_confidence_threshold: 0.7
+
+      # Jieba-specific settings
+      jieba:
+        # Mode: "accurate" (default), "full" (all possible words), "search"
+        mode: "accurate"
+
+      # NLTK-specific settings
+      nltk:
+        auto_download: true  # Download punkt if missing
+
+  text_embedding:
+    default_limit: 50
+
+  image_embedding:
+    default_limit: 50
+
+  # Search modes define how different search methods are combined
+  # Available modes:
+  #   bm25_only            - BM25 text search only
+  #   text_embedding_only  - Text embedding search only
+  #   text_hybrid          - BM25 + text embedding fusion (default)
+  #   image_embedding_only - Image similarity search (requires image query)
+  #   text_to_image        - Text query for image search (requires CLIP-like model)
+  #   text_and_image       - Query with both text and image
+  #   comprehensive        - BM25 + text + image fusion
+  search_modes:
+    bm25_only:
+      description: "BM25 text search only"
+      inputs: ["text"]
+      methods:
+        bm25: { weight: 1.0 }
+
+    text_embedding_only:
+      description: "Text embedding search only"
+      inputs: ["text"]
+      methods:
+        text_embedding: { weight: 1.0 }
+
+    text_hybrid:
+      description: "BM25 + text embedding fusion"
+      inputs: ["text"]
+      methods:
+        bm25: { weight: 0.3 }
+        text_embedding: { weight: 0.7 }
+      fusion: reciprocal_rank
+      rrf_k: 60
+
+    image_embedding_only:
+      description: "Image embedding search only"
+      inputs: ["image"]
+      methods:
+        image_embedding: { weight: 1.0 }
+
+    text_to_image:
+      description: "Search images using text query (requires CLIP-like model)"
+      inputs: ["text"]
+      methods:
+        image_embedding: { weight: 1.0 }
+
+    text_and_image:
+      description: "Query with both text and image"
+      inputs: ["text", "image"]
+      methods:
+        text_embedding: { weight: 0.5 }
+        image_embedding: { weight: 0.5 }
+      fusion: reciprocal_rank
+      rrf_k: 60
+
+    comprehensive:
+      description: "BM25 + text embedding + image embedding"
+      inputs: ["text", "image"]
+      methods:
+        bm25: { weight: 0.2 }
+        text_embedding: { weight: 0.4 }
+        image_embedding: { weight: 0.4 }
+      fusion: reciprocal_rank
+      rrf_k: 60
+
+  default_search_mode: "text_hybrid"
+
+# Web UI configuration
+webui:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8080
+
+# Feature flags
+features:
+  ocr: auto
+  embedding_search: auto
+  semantic_search: auto
+
+# Image viewer configuration
+viewer:
+  command: xdg-open  # macOS: open, Windows: start
+  args: ["{path}"]
+
+# Logging configuration
+logging:
+  # Global log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: INFO
+
+  # Console output settings
+  console:
+    enabled: true
+    level: INFO              # Can be different from global level
+    format: "rich"           # Options: rich, simple, detailed
+    colors: true             # ANSI colors (disable for pipes/files)
+    show_time: true          # Show timestamp in console
+    show_location: false     # Show file:line in console (verbose)
+
+  # File output settings
+  file:
+    enabled: false           # Enable to log to file
+    level: DEBUG             # Usually more verbose than console
+    path: "~/.local/share/flashback/flashback.log"
+    max_size: "10MB"         # Rotate when exceeds size
+    max_files: 5             # Number of rotated files to keep
+    format: "detailed"       # Always detailed for files
+
+  # Module-specific overrides (fine-grained control)
+  # modules:
+  #   workers.screenshot: INFO
+  #   workers.ocr: WARNING
+  #   workers.embedding: DEBUG
+  #   api.server: INFO
+  #   database: WARNING
+
+  # Tracing options (for debugging)
+  trace_calls: false         # Log function entry/exit
+  trace_loops: false         # Log worker loop iterations
+  trace_sql: false           # Log database queries
+  trace_api: false           # Log API requests/responses

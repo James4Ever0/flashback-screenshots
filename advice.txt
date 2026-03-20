@@ -1,0 +1,1 @@
+configure tokenizer backend, use jieba for Chinese text, use nltk for English text, write to plan then modify code and config example

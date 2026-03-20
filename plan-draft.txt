@@ -1,0 +1,25 @@
+create separate workers for screenshot taking, ocr recognition, image embedding, old screenshot removing, and current active window title collection
+
+workers always prefer latest images, when one work completes, move on next latest unprocessed image available in the directory.
+
+you would keep the result of each worker in separate folders, with timestamp just like the screenshot being taken 
+
+ocr result, image embedding, related screenshot name will be kept in database.
+
+database will prune old data than 7 days.
+
+screenshot will be taken every 1 minute.
+
+estimate the screenshot size.
+
+ocr will be done with tesseract.
+
+a web interface or a commandline tool for searching all data.
+
+can see neighbors across timeline, when i click one candidate and enter its detail or just zoom in.
+
+neighbors shall contain screenshot, active window title, ocr result etc.
+
+can allow embedding searching or just bm25 text search.
+
+can narrow search time span.
