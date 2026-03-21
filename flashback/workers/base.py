@@ -123,6 +123,12 @@ class QueueWorker(BaseWorker, ABC):
         self.poll_interval = poll_interval
         self.batch_size = batch_size
 
+    def run_iteration(self):
+        """Not used by QueueWorker - it overrides run() instead."""
+        # This dummy implementation satisfies the abstract base class requirement.
+        # QueueWorker uses get_items() and process_item() instead.
+        pass
+
     def run(self):
         """Main worker loop for queue processing (runs in child process)."""
         # Initialize resources in child process
