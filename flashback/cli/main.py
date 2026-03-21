@@ -1,5 +1,6 @@
 """Main CLI entry point for flashback."""
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -843,12 +844,67 @@ def logs(backend, show_webui, follow, lines):
         console.print(f"[yellow]No log file found for {daemon_name}[/yellow]")
         return
 
-    cmd = ["tail"]
-    if follow:
-        cmd.append("-f")
-    cmd.extend(["-n", str(lines), str(daemon.log_file)])
+    log_path = daemon.log_file
 
-    subprocess.run(cmd)
+    # Check if tail command exists
+    tail_cmd = shutil.which("tail")
+
+    if tail_cmd and not follow:
+        # Use system tail for simple case (no follow)
+        subprocess.run([tail_cmd, "-n", str(lines), str(log_path)])
+    elif tail_cmd and follow:
+        # Use system tail for follow mode
+        subprocess.run([tail_cmd, "-f", "-n", str(lines), str(log_path)])
+    else:
+        # Fallback to Python implementation
+        _tail_python(log_path, lines, follow)
+
+
+def _tail_python(file_path: Path, lines: int, follow: bool):
+    """Platform-independent tail implementation."""
+    import time
+
+    # Read last N lines
+    def read_last_n_lines(path, n):
+        """Efficiently read last N lines from file."""
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            # Seek to end and read backwards
+            f.seek(0, 2)  # Seek to end
+            file_size = f.tell()
+
+            if file_size == 0:
+                return []
+
+            # Estimate bytes to read (average 100 chars per line)
+            buffer_size = min(file_size, n * 100)
+            f.seek(max(0, file_size - buffer_size))
+
+            # Read and split lines
+            lines = f.readlines()
+
+            # Return last N lines
+            return lines[-n:] if len(lines) >= n else lines
+
+    # Print initial lines
+    for line in read_last_n_lines(file_path, lines):
+        print(line, end='')
+
+    # Follow mode
+    if follow:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            # Go to end of file
+            f.seek(0, 2)
+
+            try:
+                while True:
+                    line = f.readline()
+                    if line:
+                        print(line, end='')
+                    else:
+                        time.sleep(0.1)  # Small delay to avoid busy waiting
+            except KeyboardInterrupt:
+                # Graceful exit on Ctrl+C
+                pass
 
 
 def main():
