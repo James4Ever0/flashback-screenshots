@@ -231,6 +231,10 @@ workers:
     enabled: true
   cleanup:
     retention_days: 7
+  window_title:
+    enabled: true
+    poll_interval_seconds: 1      # How often to check active window
+    max_screenshot_age_seconds: 30  # Only update screenshots taken within this time
 
 search:
   enabled_methods:
@@ -238,6 +242,26 @@ search:
     text_embedding: true
     image_embedding: true
 ```
+
+### Window Title Tracking
+
+Flashback can track the active window title and associate it with screenshots. This helps you search for screenshots based on what application was active when they were taken.
+
+```yaml
+workers:
+  window_title:
+    enabled: true
+    poll_interval_seconds: 1      # How often to check the active window (default: 1)
+    max_screenshot_age_seconds: 30  # Only associate with screenshots taken within this time window (default: 30)
+```
+
+**How it works:**
+- The worker polls the active window title every `poll_interval_seconds`
+- When the window title changes, it finds the most recent screenshot without a window title
+- If that screenshot was taken within `max_screenshot_age_seconds`, it updates it with the window title
+- This prevents updating old screenshots when you switch windows long after they were captured
+
+**Example:** With `max_screenshot_age_seconds: 30`, if you take a screenshot at 10:00:00 and switch to a different window at 10:00:15, the screenshot will be tagged with the new window title. But if you switch windows at 10:00:45 (45 seconds later), the screenshot won't be updated.
 
 ### Using Ollama for Local Embeddings
 
