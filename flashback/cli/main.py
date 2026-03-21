@@ -626,6 +626,34 @@ def config_get(ctx, key):
 
     if value is None:
         console.print(f"[yellow]Key not found: {key}[/yellow]")
+
+        # Get all possible config keys and suggest similar ones
+        import difflib
+
+        def get_all_keys(d, prefix=""):
+            """Recursively get all dot-separated keys from config dict."""
+            keys = []
+            for k, v in d.items():
+                full_key = f"{prefix}.{k}" if prefix else k
+                keys.append(full_key)
+                if isinstance(v, dict):
+                    keys.extend(get_all_keys(v, full_key))
+            return keys
+
+        all_keys = get_all_keys(config.to_dict())
+        matches = difflib.get_close_matches(key, all_keys, n=3, cutoff=0.3)
+
+        if matches:
+            console.print("\n[dim]Did you mean:[/dim]")
+            for match in matches:
+                console.print(f"  [cyan]• {match}[/cyan]")
+        else:
+            # Show some common keys as reference
+            console.print("\n[dim]Common config keys:[/dim]")
+            console.print("  [cyan]• screenshot.interval_seconds[/cyan]")
+            console.print("  [cyan]• workers.ocr.enabled[/cyan]")
+            console.print("  [cyan]• workers.embedding.mode[/cyan]")
+            console.print("  [cyan]• search.default_search_mode[/cyan]")
     else:
         console.print(value)
 
