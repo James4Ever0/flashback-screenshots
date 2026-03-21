@@ -74,6 +74,16 @@ workers:
   # Window title worker captures the active window title with each screenshot
   # This helps you identify which application/window a screenshot came from.
   #
+  # How it works:
+  #   - The worker polls the active window title every poll_interval_seconds
+  #   - When the window title changes, it finds the most recent screenshot without a window title
+  #   - If that screenshot was taken within max_screenshot_age_seconds, it updates it
+  #   - This prevents updating old screenshots when you switch windows long after capture
+  #
+  # Example: With max_screenshot_age_seconds: 30, if you take a screenshot at 10:00:00
+  # and switch to a different window at 10:00:15, the screenshot will be tagged.
+  # But if you switch at 10:00:45 (45 seconds later), the screenshot won't be updated.
+  #
   # PLATFORM-SPECIFIC DEPENDENCIES REQUIRED:
   #   Linux (X11): pip install python-xlib  (or: pip install flashback-screenshots[linux])
   #   Windows:     pip install pygetwindow pywin32  (or: pip install flashback-screenshots[windows])
@@ -84,6 +94,7 @@ workers:
   window_title:
     enabled: true
     poll_interval_seconds: 1
+    max_screenshot_age_seconds: 30  # Only associate with screenshots taken within this time
 
 # Search configuration
 search:
