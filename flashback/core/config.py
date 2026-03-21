@@ -70,6 +70,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "window_title": {
             "enabled": True,
             "poll_interval_seconds": 1,
+            # Only associate window titles with screenshots taken within this time window
+            # Prevents updating old screenshots when user switches windows
+            "max_screenshot_age_seconds": 30,
         },
     },
     "search": {

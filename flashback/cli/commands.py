@@ -5,12 +5,10 @@ to enable lazy imports - commands are only imported when invoked.
 """
 
 import json
+import os
 import signal
-import shutil
-import subprocess
 import sys
 import time
-import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -157,13 +155,27 @@ def get_status(config: Any) -> Dict[str, Any]:
     """Get system status."""
     from flashback.core.daemon import DaemonManager
     from flashback.core.database import Database
+    from flashback.core.paths import get_config_dir
 
     backend = DaemonManager("backend")
     webui = DaemonManager("webui")
     db = Database(config.db_path)
     stats = db.get_stats()
 
+    # Get config file info
+    config_path = getattr(config, '_config_path', None)
+    config_found = config_path is not None and config_path.exists()
+
     return {
+        "config": {
+            "found": config_found,
+            "path": str(config_path) if config_found else None,
+            "search_paths": {
+                "env": os.environ.get("FLASHBACK_CONFIG", "not set"),
+                "local": str(Path("config.yaml").absolute()),
+                "user": str(get_config_dir() / "config.yaml"),
+            },
+        },
         "backend": {
             "running": backend.is_running(),
             "pid": backend.get_pid(),
@@ -176,6 +188,7 @@ def get_status(config: Any) -> Dict[str, Any]:
             "screenshot_count": stats["total"],
             "with_ocr": stats.get("with_ocr", 0),
             "with_embedding": stats.get("with_embedding", 0),
+            "with_window_title": stats.get("with_window_title", 0),
             "oldest_timestamp": stats.get("oldest_timestamp"),
             "newest_timestamp": stats.get("newest_timestamp"),
         },

@@ -254,6 +254,13 @@ def status(ctx, json_output, watch):
         table.add_column("Component", style="cyan")
         table.add_column("Status", style="green")
 
+        # Config file info
+        cfg = data["config"]
+        if cfg["found"]:
+            table.add_row("Config File", f"[green]{cfg['path']}[/green]")
+        else:
+            table.add_row("Config File", "[yellow]Not found (using defaults)[/yellow]")
+
         backend = data["backend"]
         status_str = "[green]Running[/green]" if backend["running"] else "[red]Stopped[/red]"
         if backend["pid"]:
@@ -270,8 +277,17 @@ def status(ctx, json_output, watch):
         table.add_row("Screenshots", str(db["screenshot_count"]))
         table.add_row("With OCR", str(db.get("with_ocr", 0)))
         table.add_row("With Embeddings", str(db.get("with_embedding", 0)))
+        table.add_row("With Window Title", str(db.get("with_window_title", 0)))
 
         console.print(table)
+
+        # If config not found, show search paths
+        if not cfg["found"]:
+            console.print("\n[dim]Config file search order:[/dim]")
+            console.print(f"  1. $FLASHBACK_CONFIG: {cfg['search_paths']['env']}")
+            console.print(f"  2. Local: {cfg['search_paths']['local']}")
+            console.print(f"  3. User: {cfg['search_paths']['user']}")
+            console.print("\n[dim]Create a config file with:[/dim] flashback config init")
 
     if watch:
         try:

@@ -1,6 +1,6 @@
 """Window title tracking worker for flashback."""
 
-from datetime import datetime
+import time
 from typing import Optional
 
 from flashback.workers.base import IntervalWorker
@@ -36,6 +36,9 @@ class WindowTitleWorker(IntervalWorker):
 
         poll_interval = self.config.get("workers.window_title.poll_interval_seconds", 1)
         self.interval_seconds = poll_interval
+        self.max_screenshot_age = self.config.get(
+            "workers.window_title.max_screenshot_age_seconds", 30
+        )
 
         if not HAS_XLIB and not HAS_PYGETWINDOW:
             import platform
@@ -52,17 +55,42 @@ class WindowTitleWorker(IntervalWorker):
                 print(f"[INFO] Window title capture not supported on {self._platform}")
 
     def run_iteration(self):
-        """Capture current window title."""
+        """Capture current window title and update the latest screenshot."""
         title = self.get_active_window_title()
 
-        if title and title != self.last_window_title:
-            self.last_window_title = title
+        if not title:
+            return
 
-            # Update the most recent screenshot with window title
-            # We do this by getting the latest screenshot and updating it
-            timestamp = datetime.now().timestamp()
-            self.db.update_window_title(timestamp, title)
-            print(f"[{self.name}] Window: {title[:60]}...")
+        if title == self.last_window_title:
+            return
+
+        self.last_window_title = title
+
+        # Find the latest screenshot without a window title
+        try:
+            screenshot = self.db.get_latest_without_window_title()
+            if not screenshot:
+                self.logger.debug("No screenshot without window title found")
+                return
+
+            # Check if screenshot is recent enough
+            age_seconds = time.time() - screenshot.timestamp
+            if age_seconds > self.max_screenshot_age:
+                self.logger.debug(
+                    f"Screenshot too old ({age_seconds:.1f}s > {self.max_screenshot_age}s), "
+                    f"skipping window title update"
+                )
+                return
+
+            # Update that specific screenshot with the window title
+            self.db.update_window_title(screenshot.timestamp, title)
+            self.logger.info(
+                f"Updated screenshot {screenshot.timestamp_formatted} (age: {age_seconds:.1f}s) "
+                f"with window title: {title[:60]}..."
+            )
+
+        except Exception as e:
+            self.logger.exception(f"Failed to update window title: {e}")
 
     def get_active_window_title(self) -> Optional[str]:
         """Get the active window title (platform-specific)."""

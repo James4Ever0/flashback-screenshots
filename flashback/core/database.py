@@ -175,6 +175,19 @@ class Database:
             )
             conn.commit()
 
+    def get_latest_without_window_title(self) -> Optional[ScreenshotRecord]:
+        """Get the most recent screenshot that doesn't have a window title."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM screenshots
+                WHERE window_title IS NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            return self._row_to_record(row) if row else None
+
     def get_by_timestamp(self, timestamp: float) -> Optional[ScreenshotRecord]:
         """Get screenshot by timestamp."""
         with self._connect() as conn:
@@ -366,6 +379,12 @@ class Database:
                 "SELECT COUNT(*) as count FROM screenshots WHERE image_embedding_path IS NOT NULL"
             ).fetchone()
             stats["with_image_embedding"] = row["count"] if row else 0
+
+            # With window title
+            row = conn.execute(
+                "SELECT COUNT(*) as count FROM screenshots WHERE window_title IS NOT NULL"
+            ).fetchone()
+            stats["with_window_title"] = row["count"] if row else 0
 
             # Time range
             row = conn.execute(
