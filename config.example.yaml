@@ -108,6 +108,11 @@ search:
     b: 0.75
     default_limit: 50
 
+    # BM25 index refresh interval (seconds)
+    # The BM25 index is rebuilt periodically in the background to include new screenshots.
+    # Lower values = fresher results but more CPU usage. Higher values = better performance.
+    refresh_interval_seconds: 600  # Default: 10 minutes
+
     # Tokenizer backend configuration
     # Backend options:
     #   "auto"   - Detect language and use appropriate tokenizer (default)

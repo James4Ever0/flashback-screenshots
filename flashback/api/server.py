@@ -63,6 +63,12 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     app.state.db = Database(config.db_path)
     logger.info("FastAPI app created")
 
+    # Initialize search index
+    if app.state.config.is_search_enabled("bm25"):
+        from flashback.search.bm25_manager import get_bm25_manager
+        bm25_manager = get_bm25_manager(app.state.config, app.state.db)
+        bm25_manager.get_instance()
+
     # Include routers
     app.include_router(health.router, prefix="/api/v1")
     app.include_router(search.router, prefix="/api/v1")

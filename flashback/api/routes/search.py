@@ -105,9 +105,12 @@ async def search(
 
     try:
         if "bm25" in methods and config.is_search_enabled("bm25"):
-            bm25 = BM25Search(config, db)
-            bm25_results = bm25.search(q, top_k=limit * 2)
-            score_breakdown["bm25_count"] = len(bm25_results)
+            from flashback.search.bm25_manager import get_bm25_manager
+            bm25_manager = get_bm25_manager(config, db)
+            bm25 = bm25_manager.get_instance()
+            if bm25:
+                bm25_results = bm25.search(q, top_k=limit * 2)
+                score_breakdown["bm25_count"] = len(bm25_results)
     except Exception as e:
         logger.error(f"[Search] BM25 error: {e}")
         score_breakdown["bm25_error"] = str(e)

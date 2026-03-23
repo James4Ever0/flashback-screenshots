@@ -241,6 +241,8 @@ search:
     bm25: true
     text_embedding: true
     image_embedding: true
+  bm25:
+    refresh_interval_seconds: 600  # BM25 index refresh interval
 ```
 
 ### Window Title Tracking
@@ -262,6 +264,27 @@ workers:
 - This prevents updating old screenshots when you switch windows long after they were captured
 
 **Example:** With `max_screenshot_age_seconds: 30`, if you take a screenshot at 10:00:00 and switch to a different window at 10:00:15, the screenshot will be tagged with the new window title. But if you switch windows at 10:00:45 (45 seconds later), the screenshot won't be updated.
+
+### BM25 Index Refresh
+
+Flashback uses BM25 for fast text search on OCR content. The BM25 index is cached in memory and refreshed periodically to include new screenshots without blocking search requests.
+
+```yaml
+search:
+  bm25:
+    refresh_interval_seconds: 600  # Refresh every 10 minutes (default)
+```
+
+**How it works:**
+- On first search, the BM25 index is built from all screenshots with OCR text
+- The index is cached in memory and reused for subsequent searches
+- A background thread rebuilds the index every `refresh_interval_seconds`
+- The new index is swapped atomically - searches continue using the old index until the new one is ready
+- Lower values = fresher results but more CPU usage. Higher values = better performance but may miss very recent screenshots.
+
+**When to adjust:**
+- Decrease (e.g., 300 = 5 min) if you frequently search for very recent screenshots
+- Increase (e.g., 1800 = 30 min) if you have many screenshots and search performance is more important than freshness
 
 ### Using Ollama for Local Embeddings
 

@@ -299,7 +299,7 @@
             .then(r => r.json())
             .then(data => {
                 document.getElementById('screenshot-count').textContent =
-                    data.database?.screenshot_count || 0;
+                    data.storage?.screenshot_count || 0;
             });
 
         async function search() {

@@ -100,6 +100,7 @@ async def list_screenshots(
 
 
 @router.get("/screenshots/{timestamp}")
+@router.get("/screenshots/{timestamp}/image")
 async def get_screenshot(
     request: Request,
     timestamp: float,

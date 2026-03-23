@@ -81,6 +81,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "k1": 1.5,
             "b": 0.75,
             "default_limit": 50,
+            "refresh_interval_seconds": 600,  # BM25 index refresh interval (10 minutes)
             "tokenizer": {
                 "backend": "auto",
                 "language_confidence_threshold": 0.7,
