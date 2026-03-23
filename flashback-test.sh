@@ -8,5 +8,5 @@ if [ $? -ne 0 ]; then
 fi
 
 source .venv/bin/activate
-uv pip install --reinstall .[]
+uv pip install --reinstall .[all]
 flashback $@

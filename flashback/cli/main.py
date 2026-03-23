@@ -193,6 +193,7 @@ def webui(ctx, host, port, daemon, no_browser):
 
     console = get_console()
     import uvicorn
+    import webbrowser
 
     config = Config(config_path=ctx.obj.get("config_path"))
     host = host or config.webui_host
@@ -213,10 +214,18 @@ def webui(ctx, host, port, daemon, no_browser):
 
     console.print(f"[green]Starting web UI on http://{host}:{port}[/green]")
 
-    if not no_browser and not daemon:
+    def open_browser():
+        import time
+        # wait till ready
+        time.sleep(2)
         webbrowser.open(f"http://{host}:{port}")
 
     app = create_app(config)
+
+    if not no_browser and not daemon:
+        import threading
+        threading.Thread(target=open_browser, daemon=True).start()
+        
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

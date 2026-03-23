@@ -71,11 +71,15 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
 
     # Setup templates
     template_dir = Path(__file__).parent.parent / "web" / "templates"
+    logger.debug(f"Template directory: {template_dir}")
+    logger.debug(f"Template directory exists: {template_dir.exists()}")
     if template_dir.exists():
-        app.state.templates = Jinja2Templates(directory=str(template_dir))
+        app.state.templates: Jinja2Templates = Jinja2Templates(directory=str(template_dir))
 
     # Setup static files
     static_dir = Path(__file__).parent / "static"
+    logger.debug(f"Static directory: {static_dir}")
+    logger.debug(f"Static directory exists: {static_dir.exists()}")
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
@@ -93,17 +97,44 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         """Serve the main web UI page."""
         search_methods = []
         if config.is_search_enabled("bm25"):
-            search_methods.append({"id": "bm25", "name": "BM25 Text", "default": True})
+            search_methods.append({"id": "bm25_only", "name": "BM25 Text", "default": True})
         if config.is_search_enabled("embedding"):
-            default = not config.is_search_enabled("bm25")
+            default = not (config.is_search_enabled("bm25") or config.is_search_enabled("image_embedding"))
             search_methods.append(
-                {"id": "embedding", "name": "Embedding (Semantic)", "default": default}
+                {"id": "text_embedding_only", "name": "Text Embedding (Semantic)", "default": default}
+            )
+        if config.is_search_enabled("bm25") and config.is_search_enabled("embedding"):
+            search_methods.append(
+                {"id": "text_hybrid", "name": "Text Hybrid (BM25 + Embedding)", "default": False}
+            )
+        
+        if config.is_search_enabled("image_embedding"):
+            default = not (config.is_search_enabled("bm25") or config.is_search_enabled("embedding"))
+            search_methods.append({
+                "id": "image_embedding_only", "name": "Image Embedding (Visual)", "default": default
+            })
+            search_methods.append({
+                "id": "text_to_image", "name": "Text to Image", "default": False
+            })
+        
+
+        if config.is_search_enabled("image_embedding") and config.is_search_enabled("embedding"):
+            search_methods.append(
+                {"id": "text_and_image", "name": "Text and Image Search", "default": False}
+            )
+        
+        if config.is_search_enabled("image_embedding") and config.is_search_enabled("embedding") and config.is_search_enabled("bm25"):
+            search_methods.append(
+                {"id": "comprehensive", "name": "Comprehensive Search", "default": False}
             )
 
         if hasattr(app.state, "templates"):
+            logger.debug("Request before template response: %s" % request)
+            logger.debug("Search methods before template response: %s" % search_methods)
+            app.state.templates: Jinja2Templates
             return app.state.templates.TemplateResponse(
-                "index.html",
-                {"request": request, "search_methods": search_methods},
+                request=request, name="index.html",
+                context={"search_methods": search_methods},
             )
         return {"message": "Flashback API", "search_methods": search_methods}
 

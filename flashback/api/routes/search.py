@@ -13,9 +13,11 @@ from flashback.search.embedding import (
     TextEmbeddingSearch,
 )
 from flashback.search.fusion import reciprocal_rank_fusion
+from flashback.core.logger import get_logger
 
 router = APIRouter()
 
+logger = get_logger("api.routes.search")
 
 def _record_to_dict(record: ScreenshotRecord, include_full_text: bool = False) -> Dict[str, Any]:
     """Convert ScreenshotRecord to dict for API response."""
@@ -54,15 +56,18 @@ async def search(
     window_title: Optional[str] = Query(None, description="Filter by window title"),
 ) -> Dict[str, Any]:
     """Search screenshots with configurable search mode."""
+    logger.info("Search query: %s, search mode: %s" % (q, search_mode))
     config = request.app.state.config
     db = request.app.state.db
 
     # Use default search mode if not specified
     if search_mode is None:
         search_mode = config.get_default_search_mode()
+    logger.info("Resolved search mode: %s" % search_mode)
 
     # Get search mode config
     mode_config = config.get_search_mode_config(search_mode)
+    logger.info("Mode config: %s" % mode_config)
     if not mode_config:
         raise HTTPException(status_code=400, detail=f"Unknown search mode: {search_mode}")
 
@@ -104,7 +109,7 @@ async def search(
             bm25_results = bm25.search(q, top_k=limit * 2)
             score_breakdown["bm25_count"] = len(bm25_results)
     except Exception as e:
-        print(f"[Search] BM25 error: {e}")
+        logger.error(f"[Search] BM25 error: {e}")
         score_breakdown["bm25_error"] = str(e)
 
     try:
@@ -113,7 +118,7 @@ async def search(
             text_emb_results = text_search.search(q, top_k=limit * 2)
             score_breakdown["text_embedding_count"] = len(text_emb_results)
     except Exception as e:
-        print(f"[Search] Text embedding error: {e}")
+        logger.error(f"[Search] Text embedding error: {e}")
         score_breakdown["text_embedding_error"] = str(e)
 
     try:
@@ -124,7 +129,7 @@ async def search(
                 image_emb_results = image_search.search_by_text(q, top_k=limit * 2)
             score_breakdown["image_embedding_count"] = len(image_emb_results)
     except Exception as e:
-        print(f"[Search] Image embedding error: {e}")
+        logger.error(f"[Search] Image embedding error: {e}")
         score_breakdown["image_embedding_error"] = str(e)
 
     # Fuse results based on fusion strategy

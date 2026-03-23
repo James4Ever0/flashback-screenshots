@@ -306,12 +306,12 @@
             const q = document.getElementById('searchInput').value;
             if (!q.trim()) return;
 
-            const mode = document.getElementById('searchMode').value;
+            const search_mode = document.getElementById('searchMode').value;
             const startDate = document.getElementById('startDate').value;
             const endDate = document.getElementById('endDate').value;
             const windowFilter = document.getElementById('windowFilter').value;
 
-            const params = new URLSearchParams({ q, mode, limit: '20' });
+            const params = new URLSearchParams({ q, search_mode, limit: '20' });
             if (startDate) params.append('from', startDate);
             if (endDate) params.append('to', endDate);
             if (windowFilter) params.append('window_title', windowFilter);

@@ -1,1 +1,2 @@
-configure tokenizer backend, use jieba for Chinese text, use nltk for English text, write to plan then modify code and config example
+- [x] configure tokenizer backend, use jieba for Chinese text, use nltk for English text, write to plan then modify code and config example
+- [ ] configure alternative backend for screenshot, pyautogui. modify config.example.yaml and README.md
