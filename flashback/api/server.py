@@ -97,6 +97,9 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
             StaticFiles(directory=str(screenshot_dir)),
             name="screenshots",
         )
+    else:
+        logger.warning(f"Screenshot directory not found: {screenshot_dir}")
+        exit(1)
 
     @app.get("/")
     async def index(request: Request):

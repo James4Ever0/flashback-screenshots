@@ -30,7 +30,7 @@ def _record_to_dict(record: ScreenshotRecord, include_full_text: bool = False) -
         "timestamp": record.timestamp,
         "timestamp_formatted": record.timestamp_formatted,
         "screenshot_path": record.screenshot_path,
-        "screenshot_url": f"/screenshots/{record.timestamp}/image",
+        "screenshot_url": f"/api/v1/screenshots/{record.timestamp}/image",
         "window_title": record.window_title,
         "ocr_text_preview": preview,
         "has_text_embedding": record.text_embedding_path is not None,

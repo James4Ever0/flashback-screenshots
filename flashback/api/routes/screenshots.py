@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 
 from flashback.core.database import Database
 
@@ -100,7 +101,6 @@ async def list_screenshots(
 
 
 @router.get("/screenshots/{timestamp}")
-@router.get("/screenshots/{timestamp}/image")
 async def get_screenshot(
     request: Request,
     timestamp: float,
@@ -114,6 +114,19 @@ async def get_screenshot(
 
     return _record_to_dict(record, include_full_text=True)
 
+@router.get("/screenshots/{timestamp}/image")
+async def preview_screenshot(request:Request, timestamp: float) -> FileResponse:
+    """Get screenshot preview image"""
+    db: Database = request.app.state.db
+    record = db.get_by_timestamp(timestamp)
+    
+    if not record:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    
+    if not record.screenshot_path:
+        raise HTTPException(status_code=404, detail="Screenshot image not found")
+    
+    return FileResponse(record.screenshot_path)
 
 @router.get("/screenshots/{timestamp}/neighbors")
 async def get_neighbors(
