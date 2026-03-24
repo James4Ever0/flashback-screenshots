@@ -232,7 +232,7 @@ screenshot:
 workers:
   ocr:
     enabled: true
-    languages: ["eng"]
+    languages: ["eng", "chi-sim"]
   embedding:
     enabled: true
   cleanup:
