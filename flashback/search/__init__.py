@@ -12,7 +12,6 @@ from flashback.search.tokenizer import (
     AutoTokenizer,
     BaseTokenizer,
     JiebaTokenizer,
-    NLTKTokenizer,
     SimpleTokenizer,
     get_tokenizer,
 )
@@ -26,7 +25,6 @@ __all__ = [
     "reciprocal_rank_fusion",
     "BaseTokenizer",
     "SimpleTokenizer",
-    "NLTKTokenizer",
     "JiebaTokenizer",
     "AutoTokenizer",
     "get_tokenizer",

@@ -24,6 +24,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "interval_seconds": 60,
         "quality": 85,
         "formats": ["png"],
+        # Screenshot backend: "mss" (default, fast), "pyautogui" (cross-platform fallback)
+        "backend": "mss",
     },
     "workers": {
         "screenshot": {"enabled": True},
@@ -31,7 +33,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "enabled": True,
             "work_interval_seconds": 1,
             "batch_size": 5,
-            "languages": ["eng"],
+            "languages": ["eng", "chi-sim"],
         },
         "embedding": {
             "enabled": True,
@@ -83,10 +85,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "default_limit": 50,
             "refresh_interval_seconds": 600,  # BM25 index refresh interval (10 minutes)
             "tokenizer": {
-                "backend": "auto",
+                "backend": "jieba",  # Default tokenizer: "jieba", "spacy", "simple", or "auto"
                 "language_confidence_threshold": 0.7,
                 "jieba": {"mode": "accurate"},
-                "nltk": {"auto_download": True},
+                "spacy": {
+                    "model": "en_core_web_sm",  # Options: en_core_web_sm, zh_core_web_sm, etc.
+                    "auto_download": True,
+                },
             },
         },
         "text_embedding": {"default_limit": 50},
@@ -144,7 +149,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         "default_search_mode": "text_hybrid",
     },
-    "webui": {"enabled": True, "host": "127.0.0.1", "port": 8080},
+    "webui": {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 8080,
+        # Maximum age for "latest screenshot" endpoint (seconds)
+        # Screenshots older than this will return 404
+        "latest_screenshot_age_limit_seconds": 120,  # Default: 2 minutes
+    },
     "features": {
         "ocr": "auto",
         "embedding_search": "auto",

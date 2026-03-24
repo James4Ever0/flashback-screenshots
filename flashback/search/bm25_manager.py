@@ -6,7 +6,7 @@ refreshed in the background at configurable intervals.
 
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from flashback.core.config import Config
 from flashback.core.database import Database
@@ -54,7 +54,7 @@ class BM25Manager:
     def start_background_refresh(self) -> None:
         """Start the background refresh thread."""
         if self._refresh_thread is not None and self._refresh_thread.is_alive():
-            logger.debug("Background refresh already running")
+            logger.debug("[BM25 Manager] Background refresh already running")
             return
 
         self._stop_event.clear()
@@ -64,14 +64,14 @@ class BM25Manager:
             name="BM25Refresh"
         )
         self._refresh_thread.start()
-        logger.info(f"Started BM25 background refresh (interval: {self._refresh_interval_seconds}s)")
+        logger.info(f"[BM25 Manager] Started BM25 background refresh (interval: {self._refresh_interval_seconds}s)")
 
     def stop_background_refresh(self) -> None:
         """Stop the background refresh thread."""
         self._stop_event.set()
         if self._refresh_thread and self._refresh_thread.is_alive():
             self._refresh_thread.join(timeout=5)
-            logger.info("Stopped BM25 background refresh")
+            logger.info("[BM25 Manager] Stopped BM25 background refresh")
 
     def _refresh_loop(self) -> None:
         """Background loop that periodically refreshes the BM25 instance."""
@@ -86,7 +86,7 @@ class BM25Manager:
                 self._create_or_refresh_instance()
 
             except Exception as e:
-                logger.exception(f"Error in BM25 refresh loop: {e}")
+                logger.exception(f"[BM25 Manager] Error in BM25 refresh loop: {e}")
                 time.sleep(5)  # Back off on error
 
     def _create_or_refresh_instance(self) -> None:
@@ -97,28 +97,35 @@ class BM25Manager:
         """
         from flashback.search.bm25 import BM25Search
 
-        logger.debug("Creating new BM25 instance...")
+        logger.debug("[BM25 Manager] Step 1/5: Starting BM25 instance creation...")
         start_time = time.time()
 
         try:
+            logger.debug("[BM25 Manager] Step 2/5: Connecting to database...")
+            # Database is already connected, but log for clarity
+
+            logger.debug("[BM25 Manager] Step 3/5: Creating BM25Search instance (this will build index)...")
             # Create new instance (this builds the index)
             new_instance = BM25Search(self.config, self.db)
 
+            logger.debug("[BM25 Manager] Step 4/5: Acquiring lock for atomic swap...")
             # Atomically swap instances
             with self._refresh_lock:
+                logger.debug("[BM25 Manager] Step 5/5: Swapping old instance with new instance...")
                 old_instance = self._bm25_instance
                 self._bm25_instance = new_instance
                 self._last_refresh = time.time()
 
             elapsed = time.time() - start_time
-            logger.info(f"BM25 instance refreshed in {elapsed:.2f}s")
+            logger.info(f"[BM25 Manager] BM25 instance refreshed successfully in {elapsed:.2f}s")
 
             # Clean up old instance after swap (optional, helps with memory)
             if old_instance is not None:
+                logger.debug("[BM25 Manager] Cleaning up old BM25 instance...")
                 del old_instance
 
         except Exception as e:
-            logger.exception(f"Failed to refresh BM25 instance: {e}")
+            logger.exception(f"[BM25 Manager] Failed to refresh BM25 instance: {e}")
             raise
 
     def get_instance(self) -> Any:
@@ -141,7 +148,7 @@ class BM25Manager:
 
     def refresh_now(self) -> None:
         """Force an immediate refresh of the BM25 instance."""
-        logger.info("Forcing immediate BM25 refresh")
+        logger.info("[BM25 Manager] Forcing immediate BM25 refresh")
         self._create_or_refresh_instance()
 
     @property

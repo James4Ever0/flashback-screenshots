@@ -23,33 +23,39 @@ class SimpleTokenizer(BaseTokenizer):
         return re.findall(r"[a-zA-Z0-9]+", text.lower())
 
 
-class NLTKTokenizer(BaseTokenizer):
-    """NLTK word tokenizer for English."""
+class SpacyTokenizer(BaseTokenizer):
+    """Spacy tokenizer for multilingual text."""
 
-    def __init__(self, auto_download: bool = True):
+    def __init__(self, model: str = "en_core_web_sm", auto_download: bool = True):
+        self.model = model
         self.auto_download = auto_download
-        self._ready = False
+        self._nlp = None
 
-    def _ensure_data(self):
-        if self._ready:
-            return
+    def _ensure_model(self):
+        """Ensure spacy model is loaded."""
+        if self._nlp is not None:
+            return self._nlp
+
         try:
-            import nltk
-            nltk.word_tokenize("test")
-            self._ready = True
-        except LookupError:
+            import spacy
+            self._nlp = spacy.load(self.model)
+        except OSError:
             if self.auto_download:
-                import nltk
-                nltk.download('punkt', quiet=True)
-                self._ready = True
+                import spacy.cli
+                spacy.cli.download(self.model)
+                self._nlp = spacy.load(self.model)
+            else:
+                raise
+        return self._nlp
 
     def tokenize(self, text: str) -> List[str]:
+        """Tokenize text using spacy."""
         if not text:
             return []
         try:
-            self._ensure_data()
-            import nltk
-            return nltk.word_tokenize(text.lower())
+            nlp = self._ensure_model()
+            doc = nlp(text)
+            return [token.text.lower() for token in doc]
         except Exception:
             # Fallback to simple tokenizer
             return SimpleTokenizer().tokenize(text)
@@ -89,8 +95,11 @@ class AutoTokenizer(BaseTokenizer):
 
     def __init__(self, config: dict):
         self.config = config
-        self.nltk = NLTKTokenizer(
-            auto_download=config.get("nltk", {}).get("auto_download", True)
+        # Default to en_core_web_sm for English, can be configured for other languages
+        spacy_model = config.get("spacy", {}).get("model", "en_core_web_sm")
+        self.spacy = SpacyTokenizer(
+            model=spacy_model,
+            auto_download=config.get("spacy", {}).get("auto_download", True)
         )
         self.jieba = JiebaTokenizer(
             mode=config.get("jieba", {}).get("mode", "accurate")
@@ -127,13 +136,13 @@ class AutoTokenizer(BaseTokenizer):
         if lang == "chinese":
             return self.jieba.tokenize(text)
         elif lang == "english":
-            return self.nltk.tokenize(text)
+            return self.spacy.tokenize(text)
         else:  # mixed or unknown
             # For mixed text, try jieba first (handles both)
             try:
                 return self.jieba.tokenize(text)
             except:
-                return self.nltk.tokenize(text)
+                return self.spacy.tokenize(text)
 
 
 def get_tokenizer(config: dict) -> BaseTokenizer:
@@ -145,11 +154,12 @@ def get_tokenizer(config: dict) -> BaseTokenizer:
     Returns:
         Tokenizer instance
     """
-    backend = config.get("backend", "auto")
+    backend = config.get("backend", "jieba")  # Default to jieba
 
-    if backend == "nltk":
-        return NLTKTokenizer(
-            auto_download=config.get("nltk", {}).get("auto_download", True)
+    if backend == "spacy":
+        return SpacyTokenizer(
+            model=config.get("spacy", {}).get("model", "en_core_web_sm"),
+            auto_download=config.get("spacy", {}).get("auto_download", True)
         )
     elif backend == "jieba":
         return JiebaTokenizer(

@@ -367,7 +367,7 @@ def search(ctx, query, image_path, search_mode, limit, from_time, to_time,
         from flashback.core.database import Database
         from flashback.cli.commands import (
             parse_time, search_bm25, search_text_embedding,
-            search_image, search_multi_modal, display_results
+            search_image, search_multi_modal, display_search_results
         )
     except ImportError as e:
         import traceback
@@ -446,7 +446,7 @@ def search(ctx, query, image_path, search_mode, limit, from_time, to_time,
             filtered.append((doc_id, score))
         results = filtered
 
-    display_results(results, db, query, search_mode, output_format, preview, score_breakdown, console)
+    display_search_results(results, db, query, search_mode, output_format, preview, score_breakdown, console)
 
     if open_result and results:
         record = db.get_by_id(results[0][0])
@@ -457,23 +457,22 @@ def search(ctx, query, image_path, search_mode, limit, from_time, to_time,
 
 
 @cli.command()
-@click.argument("timestamp_or_path")
+@click.argument("id_or_path")
 @click.option("--text", "-t", is_flag=True, help="Show OCR text in terminal")
 @click.option("--neighbors", "-n", default=0, help="Show N timeline neighbors")
 @click.option("--copy", "-c", is_flag=True, help="Copy image path to clipboard")
 @click.option("--export", "export_path", type=click.Path(), help="Copy image to path")
 @click.pass_context
-def view(ctx, timestamp_or_path, text, neighbors, copy, export_path):
+def view(ctx, id_or_path, text, neighbors, copy, export_path):
     """View a specific screenshot.
 
     \b
     Examples:
-        flashback view 20240320_142312
-        flashback view 20240320_142312 -t
-        flashback view 20240320_142312 -n 10
+        flashback view 12
+        flashback view 12 -t
+        flashback view 12 -n 10
     """
     try:
-        from datetime import datetime
         from flashback.core.config import Config
         from flashback.core.database import Database
     except ImportError as e:
@@ -489,24 +488,20 @@ def view(ctx, timestamp_or_path, text, neighbors, copy, export_path):
     config = Config(config_path=ctx.obj.get("config_path"))
     db = Database(config.db_path)
 
-    timestamp = None
     screenshot_path = None
 
-    if Path(timestamp_or_path).exists():
-        screenshot_path = timestamp_or_path
+    if Path(id_or_path).exists():
+        screenshot_path = id_or_path
     else:
-        ts_str = timestamp_or_path.replace("_", " ").replace("-", "")
-        for fmt in ["%Y%m%d %H%M%S", "%Y%m%d%H%M%S"]:
-            try:
-                dt = datetime.strptime(ts_str[:15], fmt)
-                timestamp = dt.timestamp()
-                break
-            except ValueError:
-                continue
+        try:
+            screenshot_id = int(id_or_path)
+        except ValueError:
+            console.print(f"[red]Invalid ID or path: {id_or_path}[/red]")
+            sys.exit(1)
 
     record = None
-    if timestamp:
-        record = db.get_by_timestamp(timestamp)
+    if screenshot_id:
+        record = db.get_by_id(screenshot_id)
     elif screenshot_path:
         all_records = db.get_unprocessed_ocr(limit=10000)
         for r in all_records:
@@ -515,7 +510,7 @@ def view(ctx, timestamp_or_path, text, neighbors, copy, export_path):
                 break
 
     if not record:
-        console.print(f"[red]Screenshot not found: {timestamp_or_path}[/red]")
+        console.print(f"[red]Screenshot not found: {id_or_path}[/red]")
         sys.exit(1)
 
     if text:

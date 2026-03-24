@@ -17,6 +17,11 @@ screenshot:
   interval_seconds: 60
   quality: 85
   formats: ["png"]
+  # Screenshot capture backend
+  # Options:
+  #   "mss"       - Fast, multi-monitor support (default, recommended)
+  #   "pyautogui" - Cross-platform fallback, slower but widely compatible
+  backend: "mss"
 
 # Worker configuration
 workers:
@@ -29,7 +34,7 @@ workers:
     batch_size: 5
     # Tesseract language packs to use
     # Install with: sudo apt-get install tesseract-ocr-<lang>
-    languages: ["eng"]
+    languages: ["eng", "chi-sim"]
 
   embedding:
     enabled: true
@@ -115,15 +120,15 @@ search:
 
     # Tokenizer backend configuration
     # Backend options:
-    #   "auto"   - Detect language and use appropriate tokenizer (default)
-    #   "nltk"   - Use NLTK word_tokenize (good for English)
-    #   "jieba"  - Use jieba for Chinese segmentation
+    #   "jieba"  - Use jieba for Chinese/English segmentation (default, recommended)
+    #   "spacy"  - Use spaCy for multilingual tokenization
     #   "simple" - Use regex [a-zA-Z0-9]+ (fast, ASCII only)
+    #   "auto"   - Detect language and use appropriate tokenizer
     tokenizer:
-      backend: "auto"
+      backend: "jieba"
 
       # For auto mode: threshold to detect Chinese text
-      # If >70% Chinese characters, uses jieba; otherwise nltk
+      # If >70% Chinese characters, uses jieba; otherwise spacy
       language_confidence_threshold: 0.7
 
       # Jieba-specific settings
@@ -131,9 +136,10 @@ search:
         # Mode: "accurate" (default), "full" (all possible words), "search"
         mode: "accurate"
 
-      # NLTK-specific settings
-      nltk:
-        auto_download: true  # Download punkt if missing
+      # Spacy-specific settings
+      spacy:
+        model: "en_core_web_sm"  # Options: en_core_web_sm, zh_core_web_sm, etc.
+        auto_download: true       # Download model if missing
 
   text_embedding:
     default_limit: 50
@@ -210,6 +216,11 @@ webui:
   enabled: true
   host: "127.0.0.1"
   port: 8080
+
+  # Maximum age for "latest screenshot" endpoint (seconds)
+  # If the latest screenshot is older than this limit, the /api/v1/screenshots/now endpoint
+  # will return 404. This helps detect if the screenshot worker has stopped.
+  latest_screenshot_age_limit_seconds: 120  # Default: 2 minutes
 
 # Feature flags
 features:

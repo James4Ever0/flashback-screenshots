@@ -60,7 +60,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
 
     # Store config and db in app state
     app.state.config = config
-    app.state.db = Database(config.db_path)
+    app.state.db = Database(config.db_path, readonly=True)
     logger.info("FastAPI app created")
 
     # Initialize search index

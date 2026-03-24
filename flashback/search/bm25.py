@@ -8,13 +8,24 @@ from flashback.core.config import Config
 from flashback.core.database import Database
 from flashback.search.tokenizer import get_tokenizer
 
+from flashback.core.logger import get_logger
+
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    tqdm = None
+
+
+logger = get_logger("search.bm25")
 
 class BM25Search:
     """BM25 ranking for OCR text search."""
 
     def __init__(self, config: Config = None, db: Database = None):
         self.config = config or Config()
-        self.db = db or Database(self.config.db_path)
+        self.db = db or Database(self.config.db_path, readonly=True)
         self.k1 = self.config.get("search.bm25.k1", 1.5)
         self.b = self.config.get("search.bm25.b", 0.75)
 
@@ -36,14 +47,27 @@ class BM25Search:
         return self.tokenizer.tokenize(text)
 
     def _build_index(self):
-        """Build inverted index from database."""
-        records = self.db.get_all_ocr_text()
+        """Build inverted index from database with stepwise logging."""
+        logger.debug("[BM25 Index Build] Step 1/4: Connecting to database...")
+        # Database connection is already established in __init__
+        logger.debug("[BM25 Index Build] Step 2/4: Reading OCR data from database...")
+        records = list(self.db.get_all_ocr_text())
+        total_records = len(records)
+        logger.debug(f"[BM25 Index Build] Loaded {total_records} records from database")
+
+        logger.debug("[BM25 Index Build] Step 3/4: Iterating and calculating document lengths...")
         total_length = 0
 
-        for doc_id, text in records:
+        # Use tqdm for progress bar if available
+        record_iterator = records
+        if HAS_TQDM:
+            record_iterator = tqdm(records, desc="BM25 Indexing", total=total_records, unit="docs")
+
+        for doc_id, text in record_iterator:
             if not text:
                 continue
 
+            logger.debug(f"[BM25 Index Build] Step 4/4: Tokenizing document {doc_id}...")
             tokens = self._tokenize(text)
             self.doc_lengths[doc_id] = len(tokens)
             total_length += len(tokens)
@@ -60,6 +84,7 @@ class BM25Search:
 
         self.N = len(self.doc_lengths)
         self.avg_dl = total_length / self.N if self.N > 0 else 0
+        logger.debug(f"[BM25 Index Build] Complete. Indexed {self.N} documents, avg_dl={self.avg_dl:.2f}")
 
     def search(self, query: str, top_k: int = 20) -> List[Tuple[int, float]]:
         """Search for query and return ranked document IDs with scores."""

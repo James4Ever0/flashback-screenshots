@@ -99,6 +99,27 @@ async def list_screenshots(
         "results": [_record_to_dict(r) for r in results],
     }
 
+@router.get("/screenshots/now")
+async def get_latest_screenshot(request: Request) -> FileResponse:
+    """Get the latest screenshot as a file response."""
+    import time
+
+    db: Database = request.app.state.db
+    config: Config = request.app.state.config
+    latest = db.get_latest()
+    if not latest:
+        raise HTTPException(status_code=404, detail="No screenshots found")
+
+    # Check age limit
+    age_limit_seconds = config.get("webui.latest_screenshot_age_limit_seconds", 120)
+    age_seconds = time.time() - latest.timestamp
+    if age_seconds > age_limit_seconds:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Latest screenshot is {age_seconds:.0f}s old (limit: {age_limit_seconds}s)"
+        )
+
+    return FileResponse(latest.screenshot_path)
 
 @router.get("/screenshots/{timestamp}")
 async def get_screenshot(

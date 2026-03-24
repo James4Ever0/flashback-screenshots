@@ -245,7 +245,7 @@ def search_multi_modal(
     return results, metadata
 
 
-def display_results(
+def display_search_results(
     results: List[Tuple[int, float]],
     db: Any,
     query: str,
@@ -299,6 +299,7 @@ def display_results(
     else:  # table
         table = Table(title=f'Search Results: "{query or "(image query)"}" ({search_mode})')
         table.add_column("#", style="cyan", justify="right")
+        table.add_column("ID", style="red")
         table.add_column("Time", style="green")
         table.add_column("Score", style="yellow")
         table.add_column("Window", style="blue")
@@ -308,6 +309,7 @@ def display_results(
         for i, (record, score) in enumerate(formatted_results, 1):
             row = [
                 str(i),
+                str(record.id),
                 record.timestamp_formatted,
                 f"{score:.2f}",
                 (record.window_title or "")[:30],

@@ -58,12 +58,12 @@ sudo apt-get install tesseract-ocr-jpn      # Japanese
 # See: apt-cache search tesseract-ocr
 ```
 
-### Chinese Language Search Support
+### Multi Language Search Support
 
-For searching Chinese text, install jieba for better word segmentation:
+For searching multilingual text, install spacy for better word segmentation:
 
 ```bash
-pip install flashback-screenshots[chinese]  # Or: pip install jieba
+pip install flashback-screenshots[multilingual]  # Or: pip install spacy
 ```
 
 Then configure the tokenizer in your config:
@@ -72,14 +72,19 @@ Then configure the tokenizer in your config:
 search:
   bm25:
     tokenizer:
-      backend: "auto"  # Automatically detect Chinese vs English
-      # Or explicitly use jieba:
-      # backend: "jieba"
-      # jieba:
-      #   mode: "accurate"  # Options: accurate, full, search
+      backend: "spacy"  # Default: jieba (good for Chinese/English)
+      # Other options:
+      # backend: "spacy"    # For multilingual tokenization
+      # backend: "simple"   # Fast regex tokenizer (ASCII only)
+      # backend: "auto"     # Auto-detect Multilingual
+
+      # Spacy-specific settings
+      spacy:
+        model: "en_core_web_sm"  # Options: en_core_web_sm, zh_core_web_sm, etc.
+        auto_download: true       # Download model if missing
 ```
 
-The tokenizer will automatically detect Chinese text and use jieba for segmentation.
+When using `backend: "auto"`, the tokenizer will detect Chinese text and use jieba for segmentation, otherwise use spacy.
 
 ## Quick Start
 
@@ -222,6 +227,7 @@ data_dir: ~/.local/share/flashback
 screenshot:
   interval_seconds: 60
   quality: 85
+  backend: "mss"  # Screenshot capture backend: "mss" (default) or "pyautogui"
 
 workers:
   ocr:
@@ -243,6 +249,17 @@ search:
     image_embedding: true
   bm25:
     refresh_interval_seconds: 600  # BM25 index refresh interval
+    tokenizer:
+      backend: "jieba"  # Tokenizer: jieba (default), spacy, simple, or auto
+      spacy:
+        model: "en_core_web_sm"  # Spacy model for multilingual support
+
+# Web UI configuration
+webui:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8080
+  latest_screenshot_age_limit_seconds: 120  # Max age for /screenshots/now endpoint
 ```
 
 ### Window Title Tracking
@@ -264,6 +281,31 @@ workers:
 - This prevents updating old screenshots when you switch windows long after they were captured
 
 **Example:** With `max_screenshot_age_seconds: 30`, if you take a screenshot at 10:00:00 and switch to a different window at 10:00:15, the screenshot will be tagged with the new window title. But if you switch windows at 10:00:45 (45 seconds later), the screenshot won't be updated.
+
+### Screenshot Backends
+
+Flashback supports multiple screenshot capture backends. The default is `mss` which is fast and supports multiple monitors, but you can switch to `pyautogui` if you encounter compatibility issues.
+
+```yaml
+screenshot:
+  backend: "mss"  # Options: "mss" (default), "pyautogui"
+```
+
+**Available backends:**
+
+| Backend | Description | Dependencies | Best For |
+|---------|-------------|--------------|----------|
+| `mss` | Multi-screen shot - fast, multi-monitor support | `pip install mss` | Default, recommended |
+| `pyautogui` | Pure Python, widely compatible | `pip install pyautogui` | Fallback when mss fails |
+
+**Backend selection:**
+- If the configured backend is not available, Flashback will automatically fall back to any available backend
+- If no backend is available, the worker will fail to start with instructions on how to install a backend
+
+**When to use pyautogui:**
+- If you encounter display/recording permission issues with mss on macOS
+- If mss fails to detect monitors correctly on your system
+- For better compatibility with remote desktop or virtual displays
 
 ### BM25 Index Refresh
 

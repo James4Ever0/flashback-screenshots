@@ -34,14 +34,18 @@ class ScreenshotRecord:
 class Database:
     """SQLite database for screenshot metadata."""
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, readonly:bool=False):
+        self.readonly=readonly
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_db()
 
     def _connect(self) -> sqlite3.Connection:
         """Create database connection."""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        if self.readonly:
+            conn = sqlite3.connect("file:"+str(self.db_path)+"?mode=ro", uri=True, check_same_thread=False)
+        else:
+            conn = sqlite3.connect(self.db_path, uri=True, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -182,6 +186,18 @@ class Database:
                 """
                 SELECT * FROM screenshots
                 WHERE window_title IS NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            return self._row_to_record(row) if row else None
+    
+    def get_latest(self) -> Optional[ScreenshotRecord]:
+        """Get the most recent screenshot."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM screenshots
                 ORDER BY timestamp DESC
                 LIMIT 1
                 """
