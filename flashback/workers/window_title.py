@@ -2,20 +2,25 @@
 
 import time
 from typing import Optional
+import platform
 
 from flashback.workers.base import IntervalWorker
 
 # Platform-specific imports
-try:
-    import Xlib.display
-    HAS_XLIB = True
-except ImportError:
+if platform.system() == 'Linux':
+    try:
+        import Xlib.display
+        HAS_XLIB = True
+    except ImportError:
+        HAS_XLIB = False
+elif platform.system() == "Windows":
+    try:
+        import pygetwindow
+        HAS_PYGETWINDOW = True
+    except ImportError:
+        HAS_PYGETWINDOW = False
+else:
     HAS_XLIB = False
-
-try:
-    import pygetwindow
-    HAS_PYGETWINDOW = True
-except ImportError:
     HAS_PYGETWINDOW = False
 
 

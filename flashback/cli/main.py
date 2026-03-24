@@ -319,68 +319,90 @@ def status(ctx, json_output, watch):
             render_table(data)
 
 
-@cli.command()
-@click.argument("query", required=False)
-@click.option("--image", "image_path", type=click.Path(exists=True), help="Search by image file")
-@click.option(
-    "--search-mode",
-    "-m",
-    default=None,
-    type=click.Choice([
-        "bm25_only",
-        "text_embedding_only",
-        "text_hybrid",
-        "image_embedding_only",
-        "text_to_image",
-        "text_and_image",
-        "comprehensive",
-    ]),
-    help="Search mode to use",
-)
-@click.option("--limit", "-n", default=20, help="Max results")
-@click.option("--from", "from_time", help="Start time (ISO or relative: 1d, 2h, 30m)")
-@click.option("--to", "to_time", help="End time (ISO or relative)")
-@click.option(
-    "--format", "-F",
-    "output_format",
-    default="table",
-    type=click.Choice(["table", "json", "csv", "simple"]),
-)
-@click.option("--preview", "-p", is_flag=True, help="Show OCR text excerpt")
-@click.option("--open", "open_result", is_flag=True, help="Open first result in image viewer")
-@click.option("--text-weight", type=float, default=0.5, help="Weight for text query")
-@click.option("--image-weight", type=float, default=0.5, help="Weight for image query")
-@click.pass_context
-def search(ctx, query, image_path, search_mode, limit, from_time, to_time,
-           output_format, preview, open_result, text_weight, image_weight):
-    """Search through screenshot history.
+def _search_via_webui(console, webui_url, query, image_path, search_mode, limit, from_time, to_time,
+                     output_format, preview, text_weight, image_weight):
+    """Search via webui client mode (lazy imports)."""
+    import requests
 
-    \b
-    Examples:
-        flashback search "meeting notes"
-        flashback search --image screenshot.png
-        flashback search "bug" --from 1d --to now
-        flashback search "TODO" --preview -n 10
-    """
+    # Check if webui is running via healthcheck endpoint
+    health_url = f"{webui_url}/healthcheck"
     try:
-        from flashback.core.config import Config
-        from flashback.core.database import Database
-        from flashback.cli.commands import (
-            parse_time, search_bm25, search_text_embedding,
-            search_image, search_multi_modal, display_search_results
-        )
-    except ImportError as e:
-        import traceback
-        traceback.print_exc()
-        click.echo("\nError: Missing dependencies for 'search' command", err=True)
-        click.echo("Install with: pip install flashback-screenshots[search]", err=True)
+        response = requests.get(health_url, timeout=5)
+        if response.status_code != 200:
+            console.print(f"[red]Web UI health check failed at {webui_url}/healthcheck [/red]")
+            sys.exit(1)
+    except requests.exceptions.Timeout:
+        console.print(f"[red]Web UI not responding at {webui_url} (timeout after 5s)[/red]")
+        sys.exit(1)
+    except requests.exceptions.ConnectionError:
+        console.print(f"[red]Web UI not running at {webui_url}[/red]")
+        console.print("[dim]Start it with: flashback webui --daemon[/dim]")
         sys.exit(1)
 
-    import subprocess
+    # Build search request
+    params = {
+        "q": query or "",
+        "search_mode": search_mode,
+        "limit": str(limit),
+    }
+    if from_time:
+        params["from"] = from_time
+    if to_time:
+        params["to"] = to_time
+
+    search_url = f"{webui_url}/api/v1/search"
+
+    with console.status("[bold green]Searching via Web UI..."):
+        try:
+            if image_path:
+                with open(image_path, "rb") as f:
+                    files = {"image": f}
+                    response = requests.post(search_url, params=params, files=files, timeout=30)
+            else:
+                response = requests.get(search_url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            console.print(f"[red]Search request failed: {e}[/red]")
+            sys.exit(1)
+
+    if data.get("error"):
+        console.print(f"[red]Search error: {data['error']}[/red]")
+        sys.exit(1)
+
+    # Display results
+    results = data.get("results", [])
+    score_breakdown = data.get("score_breakdown", {})
+
+    # Convert webui results to format expected by display_search_results
+    from flashback.core.database import Database
+    from flashback.core.config import Config
+    config = Config()
+    db = Database(config.db_path, readonly=True)
+
+    formatted_results = []
+    for r in results:
+        doc_id = r.get("id")
+        score = r.get("score", 0)
+        if doc_id:
+            formatted_results.append((doc_id, score))
+
+    from flashback.cli.commands import display_search_results
+    display_search_results(formatted_results, db, query, search_mode, output_format, preview, score_breakdown, console)
+
+    return formatted_results
+
+
+def _search_local(console, config, query, image_path, search_mode, limit, from_time, to_time,
+                 output_format, preview, text_weight, image_weight):
+    """Search using local compute mode (lazy imports)."""
+    from flashback.core.database import Database
+    from flashback.cli.commands import (
+        parse_time, search_bm25, search_text_embedding,
+        search_image, search_multi_modal, display_search_results
+    )
     from flashback.search.fusion import reciprocal_rank_fusion
 
-    console = get_console()
-    config = Config(config_path=ctx.obj.get("config_path"))
     db = Database(config.db_path)
 
     if not query and not image_path:
@@ -402,13 +424,13 @@ def search(ctx, query, image_path, search_mode, limit, from_time, to_time,
             start_ts = parse_time(from_time)
         except ValueError as e:
             console.print(f"[red]Invalid --from: {e}[/red]")
-            return
+            return []
     if to_time:
         try:
             end_ts = parse_time(to_time)
         except ValueError as e:
             console.print(f"[red]Invalid --to: {e}[/red]")
-            return
+            return []
 
     results = []
     score_breakdown = {}
@@ -448,12 +470,95 @@ def search(ctx, query, image_path, search_mode, limit, from_time, to_time,
 
     display_search_results(results, db, query, search_mode, output_format, preview, score_breakdown, console)
 
+    return results
+
+
+@cli.command()
+@click.argument("query", required=False)
+@click.option("--image", "image_path", type=click.Path(exists=True), help="Search by image file")
+@click.option(
+    "--search-mode",
+    "-m",
+    default=None,
+    type=click.Choice([
+        "bm25_only",
+        "text_embedding_only",
+        "text_hybrid",
+        "image_embedding_only",
+        "text_to_image",
+        "text_and_image",
+        "comprehensive",
+    ]),
+    help="Search mode to use",
+)
+@click.option("--limit", "-n", default=20, help="Max results")
+@click.option("--from", "from_time", help="Start time (ISO or relative: 1d, 2h, 30m)")
+@click.option("--to", "to_time", help="End time (ISO or relative)")
+@click.option(
+    "--format", "-F",
+    "output_format",
+    default="table",
+    type=click.Choice(["table", "json", "csv", "simple"]),
+)
+@click.option("--preview", "-p", is_flag=True, help="Show OCR text excerpt")
+@click.option("--open", "open_result", is_flag=True, help="Open first result in image viewer")
+@click.option("--text-weight", type=float, default=0.5, help="Weight for text query")
+@click.option("--image-weight", type=float, default=0.5, help="Weight for image query")
+@click.option("--compute-mode", '-c', type=click.Choice(["local", "webui"]), default="local", help="Compute mode")
+@click.pass_context
+def search(ctx, query, image_path, search_mode, limit, from_time, to_time,
+           output_format, preview, open_result, text_weight, image_weight, compute_mode):
+    """Search through screenshot history.
+
+    \b
+    Examples:
+        flashback search "meeting notes"
+        flashback search --compute-mode webui "meeting notes"
+        flashback search --image screenshot.png
+        flashback search "bug" --from 1d --to now
+        flashback search "TODO" --preview -n 10
+    """
+    try:
+        from flashback.core.config import Config
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        click.echo("\nError: Missing dependencies for 'search' command", err=True)
+        click.echo("Install with: pip install flashback-screenshots[search]", err=True)
+        sys.exit(1)
+
+    console = get_console()
+    config = Config(config_path=ctx.obj.get("config_path"))
+
+    if compute_mode == "webui":
+        # Get webui URL from config
+        host = config.webui_host
+        port = config.webui_port
+        webui_url = f"http://{host}:{port}"
+
+        results = _search_via_webui(
+            console, webui_url, query, image_path, search_mode, limit,
+            from_time, to_time, output_format, preview, text_weight, image_weight
+        )
+    else:
+        # Local compute mode
+        results = _search_local(
+            console, config, query, image_path, search_mode, limit,
+            from_time, to_time, output_format, preview, text_weight, image_weight
+        )
+
     if open_result and results:
-        record = db.get_by_id(results[0][0])
-        if record:
-            viewer_cmd = config.get("viewer.command", "xdg-open")
-            subprocess.Popen([viewer_cmd, record.screenshot_path],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        import subprocess
+        try:
+            from flashback.core.database import Database
+            db = Database(config.db_path)
+            record = db.get_by_id(results[0][0])
+            if record:
+                viewer_cmd = config.get("viewer.command", "xdg-open")
+                subprocess.Popen([viewer_cmd, record.screenshot_path],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
 
 @cli.command()

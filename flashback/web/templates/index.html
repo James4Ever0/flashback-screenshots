@@ -330,7 +330,7 @@
             try {
                 const res = await fetch(`${API_BASE}/search?${params}`);
                 const data = await res.json();
-
+                
                 if (data.error) {
                     document.getElementById('results').innerHTML =
                         `<div class="no-results">Error: ${escapeHtml(data.error)}</div>`;
@@ -338,7 +338,7 @@
                 }
 
                 document.getElementById('resultsInfo').textContent =
-                    `${data.total} results for "${escapeHtml(data.query)}" (${escapeHtml(data.mode)})`;
+                    `${data.total} results for "${escapeHtml(data.query)}" (${escapeHtml(data.search_mode)})`;
 
                 if (!data.results || data.results.length === 0) {
                     document.getElementById('results').innerHTML =

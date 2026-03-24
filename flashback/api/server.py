@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -101,6 +101,10 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         logger.warning(f"Screenshot directory not found: {screenshot_dir}")
         exit(1)
 
+    @app.get('/healthcheck')
+    async def healthcheck(request: Request):
+        return "OK"
+
     @app.get("/")
     async def index(request: Request):
         """Serve the main web UI page."""
@@ -146,6 +150,14 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
                 context={"search_methods": search_methods},
             )
         return {"message": "Flashback API", "search_methods": search_methods}
+
+    @app.get("/favicon.ico")
+    async def favicon():
+        """Serve the favicon."""
+        favicon_path = Path(__file__).parent / "static" / "favicon.ico"
+        if favicon_path.exists():
+            return FileResponse(str(favicon_path))
+        raise HTTPException(status_code=404, detail="Favicon not found")
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
