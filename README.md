@@ -79,6 +79,7 @@ search:
       # backend: "auto"     # Auto-detect Multilingual
 
       # Spacy-specific settings
+      # For more models, visit: https://spacy.io/models
       spacy:
         model: "en_core_web_sm"  # Options: en_core_web_sm, zh_core_web_sm, etc.
         auto_download: true       # Download model if missing
