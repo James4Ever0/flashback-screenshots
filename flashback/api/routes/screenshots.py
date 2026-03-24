@@ -99,6 +99,97 @@ async def list_screenshots(
         "results": [_record_to_dict(r) for r in results],
     }
 
+
+@router.get("/screenshots/timeline")
+async def list_screenshots_timeline(
+    request: Request,
+    before_time: Optional[float] = Query(None, description="Get screenshots before this timestamp"),
+    around_time: Optional[float] = Query(None, description="Get screenshots around this timestamp"),
+    window_title: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=100),
+) -> Dict[str, Any]:
+    """List screenshots ordered by time (most recent first) for timeline browsing.
+
+    Args:
+        before_time: If provided, get screenshots before this timestamp (for pagination)
+        around_time: If provided, get screenshots centered around this timestamp
+        window_title: Optional filter by window title
+        limit: Number of screenshots to return
+    """
+    db: Database = request.app.state.db
+
+    if around_time:
+        # Get screenshots centered around a specific time
+        records = db.get_screenshots_around_time(around_time, count=limit)
+        # Get total count for reference
+        total = db.count_screenshots_after()
+        # Determine the time range displayed
+        if records:
+            time_from = min(r.timestamp for r in records)
+            time_to = max(r.timestamp for r in records)
+        else:
+            time_from = time_to = around_time
+    elif before_time:
+        # Get screenshots before a specific time (pagination)
+        records = db.get_screenshots_ordered(before_time=before_time, limit=limit)
+        total = db.count_screenshots_after()
+        if records:
+            time_from = min(r.timestamp for r in records)
+            time_to = max(r.timestamp for r in records)
+        else:
+            time_from = time_to = before_time
+    else:
+        # Get most recent screenshots
+        records = db.get_screenshots_ordered(limit=limit)
+        total = db.count_screenshots_after()
+        if records:
+            time_from = min(r.timestamp for r in records)
+            time_to = max(r.timestamp for r in records)
+        else:
+            time_from = time_to = None
+
+    # Apply window title filter if provided
+    if window_title:
+        records = [r for r in records if r.window_title and window_title.lower() in r.window_title.lower()]
+
+    # Get oldest timestamp for reference
+    oldest_ts = db.get_oldest_timestamp()
+
+    return {
+        "total": total,
+        "limit": limit,
+        "time_from": time_from,
+        "time_to": time_to,
+        "oldest_timestamp": oldest_ts,
+        "results": [_record_to_dict(r) for r in records],
+    }
+
+
+@router.get("/screenshots/timeline/jump")
+async def jump_to_time(
+    request: Request,
+    time: float = Query(..., description="Target timestamp to jump to"),
+    count: int = Query(50, ge=1, le=100),
+) -> Dict[str, Any]:
+    """Jump to a specific time point and get nearby screenshots."""
+    db: Database = request.app.state.db
+
+    records = db.get_screenshots_around_time(time, count=count)
+
+    if not records:
+        raise HTTPException(status_code=404, detail="No screenshots found near the specified time")
+
+    time_from = min(r.timestamp for r in records)
+    time_to = max(r.timestamp for r in records)
+
+    return {
+        "jump_time": time,
+        "count": len(records),
+        "time_from": time_from,
+        "time_to": time_to,
+        "results": [_record_to_dict(r) for r in records],
+    }
+
 @router.get("/screenshots/now")
 async def get_latest_screenshot(request: Request) -> FileResponse:
     """Get the latest screenshot as a file response."""

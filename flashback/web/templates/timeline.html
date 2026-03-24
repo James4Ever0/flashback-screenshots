@@ -57,18 +57,28 @@
         .timeline-controls button.primary:hover {
             background: #3a8eef;
         }
+        .timeline-controls button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .timeline-controls label {
             color: #888;
             font-size: 14px;
         }
+        .timeline-controls input[type="datetime-local"],
         .timeline-controls input[type="number"] {
-            width: 80px;
             padding: 8px 12px;
             background: #1a1a1a;
             border: 1px solid #333;
             border-radius: 6px;
             color: #fff;
             font-size: 14px;
+        }
+        .timeline-controls input[type="datetime-local"] {
+            width: 200px;
+        }
+        .timeline-controls input[type="number"] {
+            width: 80px;
         }
         .timeline-controls select {
             padding: 8px 12px;
@@ -78,10 +88,21 @@
             color: #fff;
             font-size: 14px;
         }
-        .timeline-info {
+        .time-range-info {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+        }
+        .time-range-info .main {
+            color: #fff;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+        .time-range-info .sub {
             color: #888;
-            font-size: 14px;
-            margin-bottom: 15px;
+            font-size: 13px;
         }
         .screenshot-grid {
             display: grid;
@@ -165,6 +186,14 @@
             padding: 40px;
             color: #4a9eff;
         }
+        .jump-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            border-left: 1px solid #333;
+            padding-left: 15px;
+            margin-left: 5px;
+        }
     </style>
 </head>
 <body>
@@ -178,23 +207,27 @@
 
         <div class="timeline-controls">
             <button class="primary" onclick="loadRecent()">Most Recent</button>
-            <button onclick="moveBackward()">&larr; Backward</button>
-            <button onclick="moveForward()">Forward &rarr;</button>
-            <label>
-                Last
-                <input type="number" id="minutesInput" value="30" min="1" max="1440">
-                minutes
-            </label>
-            <select id="pageSize">
+            <button onclick="goBackPage()" id="backBtn">&larr; Back</button>
+            <button onclick="goForwardPage()" id="forwardBtn" disabled>Forward &rarr;</button>
+            <select id="pageSize" onchange="changePageSize()">
                 <option value="20">20 per page</option>
                 <option value="50" selected>50 per page</option>
                 <option value="100">100 per page</option>
             </select>
-            <button onclick="loadMinutes()">Go</button>
+            <div class="jump-controls">
+                <label>Jump to:</label>
+                <input type="datetime-local" id="jumpTime">
+                <button onclick="jumpToTime()">Go</button>
+            </div>
         </div>
 
-        <div class="timeline-info" id="timelineInfo"></div>
+        <div class="time-range-info" id="timeRangeInfo" style="display: none;">
+            <div class="main" id="timeRangeMain"></div>
+            <div class="sub" id="timeRangeSub"></div>
+        </div>
+
         <div class="screenshot-grid" id="screenshotGrid"></div>
+
         <div class="pagination" id="pagination"></div>
     </div>
 
@@ -202,11 +235,12 @@
         const API_BASE = '/api/v1';
 
         // State
-        let currentOffset = 0;
         let currentLimit = 50;
-        let currentFromTime = null;
-        let currentToTime = null;
-        let totalResults = 0;
+        let currentResults = [];  // Store current results for pagination
+        let oldestTimestamp = null;  // Track oldest screenshot in DB
+        let viewMode = 'recent';  // 'recent', 'before', 'around'
+        let currentBeforeTime = null;  // For pagination backwards
+        let currentAroundTime = null;  // For jump mode
 
         // HTML escape function to prevent XSS
         function escapeHtml(text) {
@@ -217,8 +251,15 @@
             return div.innerHTML;
         }
 
-        // Format date for datetime-local input
-        function formatDateTimeLocal(date) {
+        // Format timestamp for display
+        function formatDateTime(timestamp) {
+            if (!timestamp) return '-';
+            return new Date(timestamp * 1000).toLocaleString();
+        }
+
+        // Format datetime-local input value
+        function formatDateTimeLocal(timestamp) {
+            const date = new Date(timestamp * 1000);
             const pad = n => n.toString().padStart(2, '0');
             return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
         }
@@ -229,30 +270,31 @@
             return new Date(str).getTime() / 1000;
         }
 
-        async function loadScreenshots() {
+        async function loadScreenshots(params = {}) {
             const grid = document.getElementById('screenshotGrid');
             grid.innerHTML = '<div class="loading">Loading...</div>';
 
-            const params = new URLSearchParams({
-                limit: currentLimit.toString(),
-                offset: currentOffset.toString()
+            const queryParams = new URLSearchParams({
+                limit: currentLimit.toString()
             });
 
-            if (currentFromTime) {
-                params.append('from', formatDateTimeLocal(new Date(currentFromTime * 1000)));
+            if (params.before_time) {
+                queryParams.append('before_time', params.before_time);
             }
-            if (currentToTime) {
-                params.append('to', formatDateTimeLocal(new Date(currentToTime * 1000)));
+            if (params.around_time) {
+                queryParams.append('around_time', params.around_time);
             }
 
             try {
-                const res = await fetch(`${API_BASE}/screenshots?${params}`);
+                const res = await fetch(`${API_BASE}/screenshots/timeline?${queryParams}`);
                 const data = await res.json();
 
-                totalResults = data.total;
-                renderScreenshots(data.results);
-                renderPagination();
-                renderInfo();
+                currentResults = data.results || [];
+                oldestTimestamp = data.oldest_timestamp;
+
+                renderScreenshots(currentResults);
+                updatePaginationState();
+                renderTimeRangeInfo(data);
             } catch (e) {
                 grid.innerHTML = `<div class="no-results">Error: ${escapeHtml(e.message)}</div>`;
             }
@@ -266,7 +308,10 @@
                 return;
             }
 
-            grid.innerHTML = results.map(r => `
+            // Sort by timestamp descending (most recent first)
+            const sorted = [...results].sort((a, b) => b.timestamp - a.timestamp);
+
+            grid.innerHTML = sorted.map(r => `
                 <div class="screenshot-card" onclick="window.location.href='/screenshot/${r.id}'">
                     <img src="${escapeHtml(r.screenshot_url)}" loading="lazy" alt="Screenshot">
                     <div class="screenshot-info">
@@ -278,94 +323,126 @@
             `).join('');
         }
 
-        function renderPagination() {
-            const pagination = document.getElementById('pagination');
-            const hasPrev = currentOffset > 0;
-            const hasNext = currentOffset + currentLimit < totalResults;
+        function renderTimeRangeInfo(data) {
+            const infoBox = document.getElementById('timeRangeInfo');
+            const mainText = document.getElementById('timeRangeMain');
+            const subText = document.getElementById('timeRangeSub');
 
-            pagination.innerHTML = `
-                <button onclick="prevPage()" ${hasPrev ? '' : 'disabled'}>&larr; Previous</button>
-                <button onclick="nextPage()" ${hasNext ? '' : 'disabled'}>Next &rarr;</button>
-            `;
-        }
-
-        function renderInfo() {
-            const info = document.getElementById('timelineInfo');
-            const startNum = currentOffset + 1;
-            const endNum = Math.min(currentOffset + currentLimit, totalResults);
-
-            let timeRange = '';
-            if (currentFromTime && currentToTime) {
-                const from = new Date(currentFromTime * 1000).toLocaleString();
-                const to = new Date(currentToTime * 1000).toLocaleString();
-                timeRange = ` (${from} - ${to})`;
-            }
-
-            info.textContent = `Showing ${startNum}-${endNum} of ${totalResults} screenshots${timeRange}`;
-        }
-
-        function loadRecent() {
-            currentOffset = 0;
-            currentFromTime = null;
-            currentToTime = null;
-            loadScreenshots();
-        }
-
-        function loadMinutes() {
-            const minutes = parseInt(document.getElementById('minutesInput').value) || 30;
-            const now = Date.now() / 1000;
-            currentFromTime = now - (minutes * 60);
-            currentToTime = now;
-            currentOffset = 0;
-            loadScreenshots();
-        }
-
-        function moveBackward() {
-            // Move time window backward by the current time range
-            if (!currentFromTime || !currentToTime) {
-                // If no time range set, load last 30 minutes
-                loadMinutes();
+            if (!currentResults || currentResults.length === 0) {
+                infoBox.style.display = 'none';
                 return;
             }
-            const range = currentToTime - currentFromTime;
-            currentToTime = currentFromTime;
-            currentFromTime = currentFromTime - range;
-            currentOffset = 0;
-            loadScreenshots();
+
+            infoBox.style.display = 'block';
+
+            const timeFrom = formatDateTime(data.time_from);
+            const timeTo = formatDateTime(data.time_to);
+            const count = currentResults.length;
+            const total = data.total;
+
+            mainText.textContent = `Showing ${count} screenshots from ${timeFrom} to ${timeTo}`;
+            subText.textContent = `Total screenshots in database: ${total}`;
         }
 
-        function moveForward() {
-            if (!currentFromTime || !currentToTime) {
+        function updatePaginationState() {
+            const backBtn = document.getElementById('backBtn');
+            const forwardBtn = document.getElementById('forwardBtn');
+
+            // Can go back if we have results and the oldest result is newer than the oldest in DB
+            if (currentResults.length > 0) {
+                const oldestShown = Math.min(...currentResults.map(r => r.timestamp));
+                backBtn.disabled = oldestShown <= (oldestTimestamp || 0);
+            } else {
+                backBtn.disabled = true;
+            }
+
+            // Can go forward if we're not at the most recent
+            forwardBtn.disabled = viewMode === 'recent';
+        }
+
+        function goBackPage() {
+            if (!currentResults || currentResults.length === 0) return;
+
+            // Get the oldest timestamp from current results
+            const oldestShown = Math.min(...currentResults.map(r => r.timestamp));
+
+            viewMode = 'before';
+            currentBeforeTime = oldestShown;
+            currentAroundTime = null;
+
+            loadScreenshots({ before_time: oldestShown });
+        }
+
+        function goForwardPage() {
+            if (!currentResults || currentResults.length === 0) return;
+
+            if (viewMode === 'recent') {
+                return; // Already at most recent
+            }
+
+            // Get the newest timestamp from current results
+            const newestShown = Math.max(...currentResults.map(r => r.timestamp));
+
+            // Load screenshots before a time in the future (which gives us the next batch)
+            // Actually, we need to think about this differently
+            // "Forward" means towards more recent screenshots
+            // So we need to load with a before_time that's newer than current
+
+            // For simplicity, let's just reload from recent if we're close to now
+            const now = Date.now() / 1000;
+            if (now - newestShown < 3600) { // Less than 1 hour from now
                 loadRecent();
                 return;
             }
-            const range = currentToTime - currentFromTime;
-            const now = Date.now() / 1000;
 
-            currentFromTime = currentToTime;
-            currentToTime = Math.min(currentToTime + range, now);
-            currentOffset = 0;
-            loadScreenshots();
+            // Otherwise, jump forward by roughly the time span of current results
+            const oldestShown = Math.min(...currentResults.map(r => r.timestamp));
+            const span = newestShown - oldestShown;
+            const targetTime = newestShown + span;
+
+            loadScreenshots({ around_time: targetTime });
         }
 
-        function prevPage() {
-            currentOffset = Math.max(0, currentOffset - currentLimit);
-            loadScreenshots();
+        function loadRecent() {
+            viewMode = 'recent';
+            currentBeforeTime = null;
+            currentAroundTime = null;
+            loadScreenshots({});
         }
 
-        function nextPage() {
-            if (currentOffset + currentLimit < totalResults) {
-                currentOffset += currentLimit;
-                loadScreenshots();
+        function jumpToTime() {
+            const jumpTimeStr = document.getElementById('jumpTime').value;
+            if (!jumpTimeStr) {
+                alert('Please select a time to jump to');
+                return;
+            }
+
+            const jumpTimestamp = parseDateTimeLocal(jumpTimeStr);
+            if (!jumpTimestamp) {
+                alert('Invalid time format');
+                return;
+            }
+
+            viewMode = 'around';
+            currentAroundTime = jumpTimestamp;
+            currentBeforeTime = null;
+
+            loadScreenshots({ around_time: jumpTimestamp });
+        }
+
+        function changePageSize() {
+            currentLimit = parseInt(document.getElementById('pageSize').value);
+            // Reload with new limit
+            if (viewMode === 'recent') {
+                loadRecent();
+            } else if (viewMode === 'before' && currentBeforeTime) {
+                loadScreenshots({ before_time: currentBeforeTime });
+            } else if (viewMode === 'around' && currentAroundTime) {
+                loadScreenshots({ around_time: currentAroundTime });
+            } else {
+                loadRecent();
             }
         }
-
-        // Update limit when page size changes
-        document.getElementById('pageSize').addEventListener('change', (e) => {
-            currentLimit = parseInt(e.target.value);
-            currentOffset = 0;
-            loadScreenshots();
-        });
 
         // Load recent screenshots on page load
         loadRecent();

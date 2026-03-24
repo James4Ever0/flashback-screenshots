@@ -303,9 +303,29 @@ class Database:
             )
             return [self._row_to_record(row) for row in cursor.fetchall()]
 
-    def search_by_time_range(
-        self, start: float, end: float, limit: int = 1000
-    ) -> List[ScreenshotRecord]:
+    def count_screenshots_after(self, timestamp: Optional[float] = None) -> int:
+        """Count screenshots after a given timestamp (or total if None)."""
+        with self._connect() as conn:
+            if timestamp:
+                row = conn.execute(
+                    "SELECT COUNT(*) as count FROM screenshots WHERE timestamp > ?",
+                    (timestamp,)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) as count FROM screenshots"
+                ).fetchone()
+            return row["count"] if row else 0
+
+    def get_oldest_timestamp(self) -> Optional[float]:
+        """Get the oldest screenshot timestamp."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MIN(timestamp) as ts FROM screenshots"
+            ).fetchone()
+            return row["ts"] if row else None
+
+    def search_by_time_range(self, start: float, end: float, limit: int = 1000):
         """Get screenshots within time range."""
         with self._connect() as conn:
             cursor = conn.execute(
@@ -318,6 +338,95 @@ class Database:
                 (start, end, limit),
             )
             return [self._row_to_record(row) for row in cursor.fetchall()]
+
+    def get_screenshots_ordered(
+        self, before_time: Optional[float] = None, limit: int = 50
+    ) -> List[ScreenshotRecord]:
+        """Get screenshots ordered by timestamp (most recent first).
+
+        Args:
+            before_time: If provided, get screenshots before this timestamp
+            limit: Maximum number of screenshots to return
+        """
+        with self._connect() as conn:
+            if before_time:
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM screenshots
+                    WHERE timestamp < ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (before_time, limit),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM screenshots
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            return [self._row_to_record(row) for row in cursor.fetchall()]
+
+    def get_screenshots_around_time(
+        self, timestamp: float, count: int = 50
+    ) -> List[ScreenshotRecord]:
+        """Get screenshots centered around a specific timestamp.
+
+        Returns approximately count/2 screenshots before and count/2 after.
+        """
+        with self._connect() as conn:
+            # First try to get an equal number before and after
+            half_count = count // 2
+
+            # Get screenshots before (most recent first among those before)
+            before_cursor = conn.execute(
+                """
+                SELECT * FROM screenshots
+                WHERE timestamp < ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (timestamp, half_count),
+            )
+            before_records = [self._row_to_record(row) for row in before_cursor.fetchall()]
+            before_records.reverse()  # Now in ascending order
+
+            # Get the center screenshot (closest to timestamp)
+            center_cursor = conn.execute(
+                """
+                SELECT * FROM screenshots
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                LIMIT 1
+                """,
+                (timestamp,),
+            )
+            center_row = center_cursor.fetchone()
+            center_record = self._row_to_record(center_row) if center_row else None
+
+            # Get screenshots after
+            after_limit = half_count if center_record else count - len(before_records)
+            after_cursor = conn.execute(
+                """
+                SELECT * FROM screenshots
+                WHERE timestamp > ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+                """,
+                (timestamp, after_limit),
+            )
+            after_records = [self._row_to_record(row) for row in after_cursor.fetchall()]
+
+            # Combine: before + center + after
+            result = before_records
+            if center_record:
+                result.append(center_record)
+            result.extend(after_records)
+
+            return result
 
     def get_all_ocr_text(self) -> List[Tuple[int, str]]:
         """Get all OCR text for indexing."""
