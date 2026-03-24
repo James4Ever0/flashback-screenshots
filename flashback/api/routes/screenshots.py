@@ -121,12 +121,77 @@ async def get_latest_screenshot(request: Request) -> FileResponse:
 
     return FileResponse(latest.screenshot_path)
 
+@router.get("/screenshots/by-id/{screenshot_id}")
+async def get_screenshot_by_id(
+    request: Request,
+    screenshot_id: int,
+) -> Dict[str, Any]:
+    """Get a specific screenshot by ID."""
+    db: Database = request.app.state.db
+    record = db.get_by_id(screenshot_id)
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+
+    return _record_to_dict(record, include_full_text=True)
+
+
+@router.get("/screenshots/by-id/{screenshot_id}/neighbors")
+async def get_neighbors_by_id(
+    request: Request,
+    screenshot_id: int,
+    before: int = Query(5, ge=0, le=50),
+    after: int = Query(5, ge=0, le=50),
+) -> Dict[str, Any]:
+    """Get screenshots near a screenshot ID (timeline view)."""
+    db: Database = request.app.state.db
+
+    # Get center record
+    center = db.get_by_id(screenshot_id)
+    if not center:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+
+    # Get neighbors within window
+    window_seconds = max(before, after) * 60 * 5  # Rough estimate: 5 min per screenshot
+    all_neighbors = db.get_neighbors(center.timestamp, window_seconds=window_seconds)
+
+    # Sort and separate
+    all_neighbors.sort(key=lambda r: r.timestamp)
+
+    center_idx = None
+    for i, r in enumerate(all_neighbors):
+        if r.id == screenshot_id:
+            center_idx = i
+            break
+
+    if center_idx is None:
+        center_idx = len(all_neighbors) // 2
+
+    # Get before/after
+    start_idx = max(0, center_idx - before)
+    end_idx = min(len(all_neighbors), center_idx + after + 1)
+    selected = all_neighbors[start_idx:end_idx]
+
+    return {
+        "center_id": screenshot_id,
+        "screenshots": [
+            {
+                **_record_to_dict(r),
+                "is_center": r.id == screenshot_id,
+                "relative_minutes": round((r.timestamp - center.timestamp) / 60, 1),
+            }
+            for r in selected
+        ],
+    }
+
+
+# Legacy timestamp-based endpoints (deprecated but kept for compatibility)
 @router.get("/screenshots/{timestamp}")
 async def get_screenshot(
     request: Request,
     timestamp: float,
 ) -> Dict[str, Any]:
-    """Get a specific screenshot by timestamp."""
+    """Get a specific screenshot by timestamp (deprecated, use /by-id/{id})."""
     db: Database = request.app.state.db
     record = db.get_by_timestamp(timestamp)
 
@@ -135,19 +200,21 @@ async def get_screenshot(
 
     return _record_to_dict(record, include_full_text=True)
 
+
 @router.get("/screenshots/{timestamp}/image")
 async def preview_screenshot(request:Request, timestamp: float) -> FileResponse:
     """Get screenshot preview image"""
     db: Database = request.app.state.db
     record = db.get_by_timestamp(timestamp)
-    
+
     if not record:
         raise HTTPException(status_code=404, detail="Screenshot not found")
-    
+
     if not record.screenshot_path:
         raise HTTPException(status_code=404, detail="Screenshot image not found")
-    
+
     return FileResponse(record.screenshot_path)
+
 
 @router.get("/screenshots/{timestamp}/neighbors")
 async def get_neighbors(

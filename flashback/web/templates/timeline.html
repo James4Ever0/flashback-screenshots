@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timeline - Flashback</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #333;
+        }
+        h1 { font-size: 28px; color: #fff; }
+        h1 a { color: #fff; text-decoration: none; }
+        h1 a:hover { color: #4a9eff; }
+        .nav-links a {
+            color: #4a9eff;
+            text-decoration: none;
+            margin-left: 20px;
+            font-size: 14px;
+        }
+        .nav-links a:hover { text-decoration: underline; }
+        .timeline-controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .timeline-controls button {
+            padding: 10px 20px;
+            font-size: 14px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #fff;
+            cursor: pointer;
+        }
+        .timeline-controls button:hover {
+            border-color: #4a9eff;
+        }
+        .timeline-controls button.primary {
+            background: #4a9eff;
+            border-color: #4a9eff;
+        }
+        .timeline-controls button.primary:hover {
+            background: #3a8eef;
+        }
+        .timeline-controls label {
+            color: #888;
+            font-size: 14px;
+        }
+        .timeline-controls input[type="number"] {
+            width: 80px;
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 14px;
+        }
+        .timeline-controls select {
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 14px;
+        }
+        .timeline-info {
+            color: #888;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        .screenshot-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+        }
+        .screenshot-card {
+            background: #1a1a1a;
+            border-radius: 12px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 1px solid #333;
+        }
+        .screenshot-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            border-color: #4a9eff;
+        }
+        .screenshot-card img {
+            width: 100%;
+            height: 160px;
+            object-fit: cover;
+            background: #0a0a0a;
+        }
+        .screenshot-info {
+            padding: 12px;
+        }
+        .screenshot-time {
+            color: #888;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        .screenshot-window {
+            color: #4a9eff;
+            font-size: 12px;
+            margin-top: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .screenshot-ocr {
+            color: #aaa;
+            font-size: 11px;
+            margin-top: 8px;
+            max-height: 40px;
+            overflow: hidden;
+            line-height: 1.4;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #333;
+        }
+        .pagination button {
+            padding: 12px 24px;
+            font-size: 14px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #fff;
+            cursor: pointer;
+        }
+        .pagination button:hover:not(:disabled) {
+            border-color: #4a9eff;
+        }
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .no-results {
+            text-align: center;
+            padding: 60px;
+            color: #888;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #4a9eff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><a href="/">Flashback</a></h1>
+            <div class="nav-links">
+                <a href="/">Search</a>
+            </div>
+        </header>
+
+        <div class="timeline-controls">
+            <button class="primary" onclick="loadRecent()">Most Recent</button>
+            <button onclick="moveBackward()">&larr; Backward</button>
+            <button onclick="moveForward()">Forward &rarr;</button>
+            <label>
+                Last
+                <input type="number" id="minutesInput" value="30" min="1" max="1440">
+                minutes
+            </label>
+            <select id="pageSize">
+                <option value="20">20 per page</option>
+                <option value="50" selected>50 per page</option>
+                <option value="100">100 per page</option>
+            </select>
+            <button onclick="loadMinutes()">Go</button>
+        </div>
+
+        <div class="timeline-info" id="timelineInfo"></div>
+        <div class="screenshot-grid" id="screenshotGrid"></div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v1';
+
+        // State
+        let currentOffset = 0;
+        let currentLimit = 50;
+        let currentFromTime = null;
+        let currentToTime = null;
+        let totalResults = 0;
+
+        // HTML escape function to prevent XSS
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const str = String(text);
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Format date for datetime-local input
+        function formatDateTimeLocal(date) {
+            const pad = n => n.toString().padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
+        // Parse datetime-local to timestamp
+        function parseDateTimeLocal(str) {
+            if (!str) return null;
+            return new Date(str).getTime() / 1000;
+        }
+
+        async function loadScreenshots() {
+            const grid = document.getElementById('screenshotGrid');
+            grid.innerHTML = '<div class="loading">Loading...</div>';
+
+            const params = new URLSearchParams({
+                limit: currentLimit.toString(),
+                offset: currentOffset.toString()
+            });
+
+            if (currentFromTime) {
+                params.append('from', formatDateTimeLocal(new Date(currentFromTime * 1000)));
+            }
+            if (currentToTime) {
+                params.append('to', formatDateTimeLocal(new Date(currentToTime * 1000)));
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/screenshots?${params}`);
+                const data = await res.json();
+
+                totalResults = data.total;
+                renderScreenshots(data.results);
+                renderPagination();
+                renderInfo();
+            } catch (e) {
+                grid.innerHTML = `<div class="no-results">Error: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function renderScreenshots(results) {
+            const grid = document.getElementById('screenshotGrid');
+
+            if (!results || results.length === 0) {
+                grid.innerHTML = '<div class="no-results">No screenshots found</div>';
+                return;
+            }
+
+            grid.innerHTML = results.map(r => `
+                <div class="screenshot-card" onclick="window.location.href='/screenshot/${r.id}'">
+                    <img src="${escapeHtml(r.screenshot_url)}" loading="lazy" alt="Screenshot">
+                    <div class="screenshot-info">
+                        <div class="screenshot-time">${escapeHtml(r.timestamp_formatted)}</div>
+                        <div class="screenshot-window">${escapeHtml(r.window_title || 'Unknown Window')}</div>
+                        <div class="screenshot-ocr">${escapeHtml(r.ocr_text_preview || '')}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderPagination() {
+            const pagination = document.getElementById('pagination');
+            const hasPrev = currentOffset > 0;
+            const hasNext = currentOffset + currentLimit < totalResults;
+
+            pagination.innerHTML = `
+                <button onclick="prevPage()" ${hasPrev ? '' : 'disabled'}>&larr; Previous</button>
+                <button onclick="nextPage()" ${hasNext ? '' : 'disabled'}>Next &rarr;</button>
+            `;
+        }
+
+        function renderInfo() {
+            const info = document.getElementById('timelineInfo');
+            const startNum = currentOffset + 1;
+            const endNum = Math.min(currentOffset + currentLimit, totalResults);
+
+            let timeRange = '';
+            if (currentFromTime && currentToTime) {
+                const from = new Date(currentFromTime * 1000).toLocaleString();
+                const to = new Date(currentToTime * 1000).toLocaleString();
+                timeRange = ` (${from} - ${to})`;
+            }
+
+            info.textContent = `Showing ${startNum}-${endNum} of ${totalResults} screenshots${timeRange}`;
+        }
+
+        function loadRecent() {
+            currentOffset = 0;
+            currentFromTime = null;
+            currentToTime = null;
+            loadScreenshots();
+        }
+
+        function loadMinutes() {
+            const minutes = parseInt(document.getElementById('minutesInput').value) || 30;
+            const now = Date.now() / 1000;
+            currentFromTime = now - (minutes * 60);
+            currentToTime = now;
+            currentOffset = 0;
+            loadScreenshots();
+        }
+
+        function moveBackward() {
+            // Move time window backward by the current time range
+            if (!currentFromTime || !currentToTime) {
+                // If no time range set, load last 30 minutes
+                loadMinutes();
+                return;
+            }
+            const range = currentToTime - currentFromTime;
+            currentToTime = currentFromTime;
+            currentFromTime = currentFromTime - range;
+            currentOffset = 0;
+            loadScreenshots();
+        }
+
+        function moveForward() {
+            if (!currentFromTime || !currentToTime) {
+                loadRecent();
+                return;
+            }
+            const range = currentToTime - currentFromTime;
+            const now = Date.now() / 1000;
+
+            currentFromTime = currentToTime;
+            currentToTime = Math.min(currentToTime + range, now);
+            currentOffset = 0;
+            loadScreenshots();
+        }
+
+        function prevPage() {
+            currentOffset = Math.max(0, currentOffset - currentLimit);
+            loadScreenshots();
+        }
+
+        function nextPage() {
+            if (currentOffset + currentLimit < totalResults) {
+                currentOffset += currentLimit;
+                loadScreenshots();
+            }
+        }
+
+        // Update limit when page size changes
+        document.getElementById('pageSize').addEventListener('change', (e) => {
+            currentLimit = parseInt(e.target.value);
+            currentOffset = 0;
+            loadScreenshots();
+        });
+
+        // Load recent screenshots on page load
+        loadRecent();
+    </script>
+</body>
+</html>

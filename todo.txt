@@ -1,0 +1,4 @@
+- [x] separate screenshot detail page from search page
+- [x] use screenshot id instead of using timestamp for getting screenshot details, neighbors
+- [x] create timeline browsing page, one can browse most recent screenshots, last xx minutes screenshots, ordered by time, move forward and backward in timeline using buttons.
+- [ ] modify timeline.html, order all screenshots by time, most recent first, can jump to specific time point (collect nearby x screenshots). the page will display current y viewed screenshots are spanning from time z to time a. one can click the most recent button to get latest x screenshots. can go back page. get results by screenshot timestamp order, instead of strict time range.

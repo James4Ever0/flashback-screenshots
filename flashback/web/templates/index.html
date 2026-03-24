@@ -139,65 +139,6 @@
             overflow: hidden;
             line-height: 1.4;
         }
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.95);
-            z-index: 100;
-            overflow: auto;
-        }
-        .modal-content {
-            max-width: 1400px;
-            margin: 40px auto;
-            padding: 20px;
-        }
-        .modal-close {
-            position: fixed;
-            top: 20px;
-            right: 30px;
-            font-size: 36px;
-            color: #fff;
-            cursor: pointer;
-            z-index: 101;
-            background: rgba(0,0,0,0.5);
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: none;
-        }
-        .modal-image {
-            max-width: 100%;
-            border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-        }
-        .modal-info {
-            margin-top: 20px;
-            padding: 20px;
-            background: #1a1a1a;
-            border-radius: 8px;
-        }
-        .modal-info h3 {
-            margin-bottom: 10px;
-            color: #fff;
-        }
-        .ocr-full {
-            white-space: pre-wrap;
-            font-family: monospace;
-            font-size: 13px;
-            color: #ccc;
-            background: #0a0a0a;
-            padding: 15px;
-            border-radius: 6px;
-            max-height: 300px;
-            overflow: auto;
-        }
         .neighbors {
             margin-top: 30px;
         }
@@ -246,14 +187,25 @@
             padding: 40px;
             color: #4a9eff;
         }
+
+        .nav-links a {
+            color: #4a9eff;
+            text-decoration: none;
+            margin-left: 20px;
+            font-size: 14px;
+        }
+        .nav-links a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Flashback</h1>
-            <div style="color: #888; font-size: 14px;">
-                <span id="screenshot-count">-</span> screenshots indexed
+            <div style="display: flex; align-items: center; gap: 20px; color: #888; font-size: 14px;">
+                <div class="nav-links">
+                    <a href="/timeline">Timeline</a>
+                </div>
+                <span><span id="screenshot-count">-</span> screenshots indexed</span>
             </div>
         </header>
 
@@ -284,11 +236,6 @@
 
         <div class="results-info" id="resultsInfo"></div>
         <div class="results" id="results"></div>
-    </div>
-
-    <div class="modal" id="detailModal">
-        <button class="modal-close" onclick="closeModal()">&times;</button>
-        <div class="modal-content" id="modalContent"></div>
     </div>
 
     <script>
@@ -347,7 +294,7 @@
                 }
 
                 const resultsHtml = data.results.map((r, i) => `
-                    <div class="result-card" onclick="showDetail(${r.timestamp})">
+                    <div class="result-card" onclick="window.location.href='/screenshot/${r.id}'">
                         <img src="${escapeHtml(r.screenshot_url)}" loading="lazy" alt="Screenshot">
                         <div class="result-info">
                             <div class="result-time">${escapeHtml(r.timestamp_formatted)}</div>
@@ -365,61 +312,9 @@
             }
         }
 
-        async function showDetail(timestamp) {
-            const [detailRes, neighborsRes] = await Promise.all([
-                fetch(`${API_BASE}/screenshots/${timestamp}`),
-                fetch(`${API_BASE}/screenshots/${timestamp}/neighbors?before=5&after=5`)
-            ]);
-
-            const detail = await detailRes.json();
-            const neighbors = await neighborsRes.json();
-
-            const neighborsHtml = neighbors.screenshots.map(n => `
-                <div class="neighbor-card ${n.is_center ? 'center' : ''}" onclick="showDetail(${n.timestamp})">
-                    <img src="${escapeHtml(n.screenshot_url)}" loading="lazy">
-                    <div class="time">${n.relative_minutes > 0 ? '+' : ''}${n.relative_minutes}m - ${escapeHtml(n.timestamp_formatted)}</div>
-                </div>
-            `).join('');
-
-            document.getElementById('modalContent').innerHTML = `
-                <img class="modal-image" src="${escapeHtml(detail.screenshot_url)}" alt="Screenshot">
-                <div class="modal-info">
-                    <h3>${escapeHtml(detail.timestamp_formatted)}</h3>
-                    <p><strong>Window:</strong> ${escapeHtml(detail.window_title || 'Unknown')}</p>
-                    ${detail.ocr_text_full ? `
-                        <h3 style="margin-top: 20px;">OCR Text</h3>
-                        <div class="ocr-full">${escapeHtml(detail.ocr_text_full)}</div>
-                    ` : ''}
-                </div>
-                <div class="neighbors">
-                    <h3>Timeline Context</h3>
-                    <div class="neighbor-grid">${neighborsHtml}</div>
-                </div>
-            `;
-
-            document.getElementById('detailModal').style.display = 'block';
-            document.body.style.overflow = 'hidden';
-        }
-
-        function closeModal() {
-            document.getElementById('detailModal').style.display = 'none';
-            document.body.style.overflow = 'auto';
-        }
-
         // Event listeners
         document.getElementById('searchInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') search();
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeModal();
-        });
-
-        // Close modal on outside click
-        document.getElementById('detailModal').addEventListener('click', (e) => {
-            if (e.target === document.getElementById('detailModal')) {
-                closeModal();
-            }
         });
     </script>
 </body>

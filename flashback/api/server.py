@@ -105,6 +105,24 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     async def healthcheck(request: Request):
         return "OK"
 
+    @app.get("/timeline")
+    async def timeline(request: Request):
+        """Serve the timeline browsing page."""
+        if hasattr(app.state, "templates"):
+            return app.state.templates.TemplateResponse(
+                request=request, name="timeline.html", context={}
+            )
+        return {"message": "Timeline page"}
+
+    @app.get("/screenshot/{screenshot_id}")
+    async def screenshot_detail(request: Request, screenshot_id: int):
+        """Serve the screenshot detail page."""
+        if hasattr(app.state, "templates"):
+            return app.state.templates.TemplateResponse(
+                request=request, name="detail.html", context={"screenshot_id": screenshot_id}
+            )
+        return {"message": "Screenshot detail page", "id": screenshot_id}
+
     @app.get("/")
     async def index(request: Request):
         """Serve the main web UI page."""
