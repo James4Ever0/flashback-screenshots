@@ -294,6 +294,15 @@
     <script>
         const API_BASE = '/api/v1';
 
+        // HTML escape function to prevent XSS
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const str = String(text);
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
         // Load screenshot count on page load
         fetch(`${API_BASE}/status`)
             .then(r => r.json())
@@ -324,12 +333,12 @@
 
                 if (data.error) {
                     document.getElementById('results').innerHTML =
-                        `<div class="no-results">Error: ${data.error}</div>`;
+                        `<div class="no-results">Error: ${escapeHtml(data.error)}</div>`;
                     return;
                 }
 
                 document.getElementById('resultsInfo').textContent =
-                    `${data.total} results for "${data.query}" (${data.mode})`;
+                    `${data.total} results for "${escapeHtml(data.query)}" (${escapeHtml(data.mode)})`;
 
                 if (!data.results || data.results.length === 0) {
                     document.getElementById('results').innerHTML =
@@ -339,12 +348,12 @@
 
                 const resultsHtml = data.results.map((r, i) => `
                     <div class="result-card" onclick="showDetail(${r.timestamp})">
-                        <img src="${r.screenshot_url}" loading="lazy" alt="Screenshot">
+                        <img src="${escapeHtml(r.screenshot_url)}" loading="lazy" alt="Screenshot">
                         <div class="result-info">
-                            <div class="result-time">${r.timestamp_formatted}</div>
-                            <div class="result-window">${r.window_title || 'Unknown Window'}</div>
+                            <div class="result-time">${escapeHtml(r.timestamp_formatted)}</div>
+                            <div class="result-window">${escapeHtml(r.window_title || 'Unknown Window')}</div>
                             <div class="result-score">Score: ${r.score?.toFixed(3) || 'N/A'}</div>
-                            <div class="result-ocr">${r.ocr_text_preview || ''}</div>
+                            <div class="result-ocr">${escapeHtml(r.ocr_text_preview || '')}</div>
                         </div>
                     </div>
                 `).join('');
@@ -352,7 +361,7 @@
                 document.getElementById('results').innerHTML = resultsHtml;
             } catch (e) {
                 document.getElementById('results').innerHTML =
-                    `<div class="no-results">Error: ${e.message}</div>`;
+                    `<div class="no-results">Error: ${escapeHtml(e.message)}</div>`;
             }
         }
 
@@ -367,19 +376,19 @@
 
             const neighborsHtml = neighbors.screenshots.map(n => `
                 <div class="neighbor-card ${n.is_center ? 'center' : ''}" onclick="showDetail(${n.timestamp})">
-                    <img src="${n.screenshot_url}" loading="lazy">
-                    <div class="time">${n.relative_minutes > 0 ? '+' : ''}${n.relative_minutes}m - ${n.timestamp_formatted}</div>
+                    <img src="${escapeHtml(n.screenshot_url)}" loading="lazy">
+                    <div class="time">${n.relative_minutes > 0 ? '+' : ''}${n.relative_minutes}m - ${escapeHtml(n.timestamp_formatted)}</div>
                 </div>
             `).join('');
 
             document.getElementById('modalContent').innerHTML = `
-                <img class="modal-image" src="${detail.screenshot_url}" alt="Screenshot">
+                <img class="modal-image" src="${escapeHtml(detail.screenshot_url)}" alt="Screenshot">
                 <div class="modal-info">
-                    <h3>${detail.timestamp_formatted}</h3>
-                    <p><strong>Window:</strong> ${detail.window_title || 'Unknown'}</p>
+                    <h3>${escapeHtml(detail.timestamp_formatted)}</h3>
+                    <p><strong>Window:</strong> ${escapeHtml(detail.window_title || 'Unknown')}</p>
                     ${detail.ocr_text_full ? `
                         <h3 style="margin-top: 20px;">OCR Text</h3>
-                        <div class="ocr-full">${detail.ocr_text_full}</div>
+                        <div class="ocr-full">${escapeHtml(detail.ocr_text_full)}</div>
                     ` : ''}
                 </div>
                 <div class="neighbors">
