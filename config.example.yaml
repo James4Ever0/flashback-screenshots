@@ -22,6 +22,9 @@ screenshot:
   #   "mss"       - Fast, multi-monitor support (default, recommended)
   #   "pyautogui" - Cross-platform fallback, slower but widely compatible
   backend: "mss"
+  # Skip screenshots when screen is locked (Linux Xorg/Windows only)
+  # Default: true - protects privacy by not capturing when screen is locked
+  no_screenshot_on_locked_screen: true
 
 # Worker configuration
 workers:
@@ -34,7 +37,7 @@ workers:
     batch_size: 5
     # Tesseract language packs to use
     # Install with: sudo apt-get install tesseract-ocr-<lang>
-    languages: ["eng", "chi-sim"]
+    languages: ["eng", "chi_sim"]
 
   embedding:
     enabled: true

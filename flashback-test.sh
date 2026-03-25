@@ -9,4 +9,7 @@ fi
 
 source .venv/bin/activate
 uv pip install --reinstall .[all]
+
+echo "Removing generated config"
+rm ~/.config/flashback/config.yaml
 flashback $@

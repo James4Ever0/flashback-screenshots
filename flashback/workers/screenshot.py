@@ -21,6 +21,7 @@ except ImportError:
     HAS_PYAUTOGUI = False
     pyautogui = None  # type: ignore
 
+from flashback.core.screen_lock import is_screen_locked
 from flashback.workers.base import IntervalWorker
 
 
@@ -146,6 +147,16 @@ class ScreenshotWorker(IntervalWorker):
 
     def run_iteration(self):
         """Capture a single screenshot."""
+        # Check if screen is locked and skip if configured
+        if self.config.get("screenshot.no_screenshot_on_locked_screen", True):
+            if is_screen_locked():
+                self.logger.debug("Screen is locked, skipping screenshot")
+                return
+            else:
+                self.logger.debug("Screen is not locked, continuing")
+        else:
+            self.logger.debug("User does not require screenlock detection")
+
         timestamp = datetime.now()
         timestamp_float = timestamp.timestamp()
         filename = timestamp.strftime("%Y%m%d_%H%M%S.png")

@@ -67,15 +67,16 @@
         }
         .timeline-controls input[type="datetime-local"],
         .timeline-controls input[type="number"] {
-            padding: 8px 12px;
+            padding: 12px 16px;
             background: #1a1a1a;
             border: 1px solid #333;
-            border-radius: 6px;
+            border-radius: 8px;
             color: #fff;
-            font-size: 14px;
+            font-size: 16px;
         }
         .timeline-controls input[type="datetime-local"] {
-            width: 200px;
+            width: 260px;
+            min-width: 260px;
         }
         .timeline-controls input[type="number"] {
             width: 80px;
@@ -444,8 +445,33 @@
             }
         }
 
-        // Load recent screenshots on page load
-        loadRecent();
+        // Check for time query parameter on page load
+        function checkTimeQueryParam() {
+            const params = new URLSearchParams(window.location.search);
+            const timeParam = params.get('time');
+            if (timeParam) {
+                const timestamp = parseFloat(timeParam);
+                if (!isNaN(timestamp)) {
+                    // Set the jump time input
+                    const date = new Date(timestamp * 1000);
+                    const pad = n => n.toString().padStart(2, '0');
+                    const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+                    document.getElementById('jumpTime').value = dateStr;
+                    // Load screenshots around this time
+                    viewMode = 'around';
+                    currentAroundTime = timestamp;
+                    currentBeforeTime = null;
+                    loadScreenshots({ around_time: timestamp });
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Load recent screenshots on page load (or jump to time if specified)
+        if (!checkTimeQueryParam()) {
+            loadRecent();
+        }
     </script>
 </body>
 </html>

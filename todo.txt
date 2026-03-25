@@ -1,4 +1,7 @@
 - [x] separate screenshot detail page from search page
 - [x] use screenshot id instead of using timestamp for getting screenshot details, neighbors
 - [x] create timeline browsing page, one can browse most recent screenshots, last xx minutes screenshots, ordered by time, move forward and backward in timeline using buttons.
-- [ ] modify timeline.html, order all screenshots by time, most recent first, can jump to specific time point (collect nearby x screenshots). the page will display current y viewed screenshots are spanning from time z to time a. one can click the most recent button to get latest x screenshots. can go back page. get results by screenshot timestamp order, instead of strict time range.
+- [x] modify timeline.html, order all screenshots by time, most recent first, can jump to specific time point (collect nearby x screenshots). the page will display current y viewed screenshots are spanning from time z to time a. one can click the most recent button to get latest x screenshots. can go back page. get results by screenshot timestamp order, instead of strict time range.
+- [x] add jump to timeline option to screenshot detail page, pass the current screenshot timestamp to the jump to timeline option, pass the timestamp using query parameter
+- [x] expand the jump to timeline time selector box. since it is too small for displaying all params of the time. refer to index.html for help.
+- [x] detect if screen is locked, on linux xorg and windows. if screen is locked, do not take screenshots during this period if config has setting "no_screenshot_on_locked_screen" for screenshot worker. this setting shall be default to true, change example config file, default config in code, and readme after code change.

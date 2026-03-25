@@ -26,6 +26,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "formats": ["png"],
         # Screenshot backend: "mss" (default, fast), "pyautogui" (cross-platform fallback)
         "backend": "mss",
+        # Skip screenshots when screen is locked (Linux Xorg/Windows only)
+        "no_screenshot_on_locked_screen": True,
     },
     "workers": {
         "screenshot": {"enabled": True},
@@ -33,10 +35,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "enabled": True,
             "work_interval_seconds": 1,
             "batch_size": 5,
-            "languages": ["eng", "chi-sim"],
+            "languages": ["eng", "chi_sim"],
         },
         "embedding": {
-            "enabled": True,
+            "enabled": False,
             "work_interval_seconds": 1,
             "batch_size": 3,
             # Embedding mode: text-only, image-only, text-image-hybrid
@@ -78,7 +80,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
     },
     "search": {
-        "enabled_methods": {"bm25": True, "text_embedding": True, "image_embedding": True},
+        "enabled_methods": {"bm25": True, "text_embedding": False, "image_embedding": False},
         "bm25": {
             "k1": 1.5,
             "b": 0.75,
@@ -147,7 +149,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                 "rrf_k": 60,
             },
         },
-        "default_search_mode": "text_hybrid",
+        "default_search_mode": "bm25_only",
     },
     "webui": {
         "enabled": True,

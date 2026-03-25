@@ -233,7 +233,7 @@ screenshot:
 workers:
   ocr:
     enabled: true
-    languages: ["eng", "chi-sim"]
+    languages: ["eng", "chi_sim"]
   embedding:
     enabled: true
   cleanup:
@@ -307,6 +307,30 @@ screenshot:
 - If you encounter display/recording permission issues with mss on macOS
 - If mss fails to detect monitors correctly on your system
 - For better compatibility with remote desktop or virtual displays
+
+### Screen Lock Detection
+
+Flashback can detect when your screen is locked and skip taking screenshots during that time. This protects your privacy by not capturing content while you're away from your computer.
+
+```yaml
+screenshot:
+  no_screenshot_on_locked_screen: true  # Default: true
+```
+
+**Supported platforms:**
+- **Linux (Xorg)**: Detects GNOME Screensaver, xscreensaver, i3lock, slock, xlock, light-locker, xsecurelock, and other common screen lockers
+- **Windows**: Detects via LogonUI.exe (lock screen process)
+- **macOS**: Not currently supported
+
+**How it works:**
+- When enabled (default), the screenshot worker checks if the screen is locked before each capture
+- If the screen is locked, the screenshot is skipped and a debug log entry is made
+- No screenshot is taken or stored during lock periods
+
+**When to disable:**
+- If you want continuous capture even when away from your computer
+- If screen lock detection is causing issues on your system
+- On platforms where detection is not supported
 
 ### BM25 Index Refresh
 
