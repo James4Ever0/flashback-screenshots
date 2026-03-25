@@ -1,0 +1,2 @@
+https://github.com/openrecall/openrecall
+https://github.com/apirrone/Memento
