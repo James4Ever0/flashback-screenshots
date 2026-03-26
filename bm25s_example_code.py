@@ -17,5 +17,6 @@ query = "does the fish purr like a cat?"
 query_tokens = bm25s.tokenize(query)
 # Retrieve top 2 results
 results, scores = retriever.retrieve(query_tokens, k=2, corpus=corpus)
+
 for rank, (doc, score) in enumerate(zip(results[0], scores[0]), start=1):
    print(f"Rank {rank} (score: {score:.2f}): {doc}")

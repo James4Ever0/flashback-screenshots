@@ -4,7 +4,6 @@ import base64
 import io
 from typing import Any, Dict, List, Optional, Union
 
-import numpy as np
 from PIL import Image
 
 try:
@@ -14,6 +13,14 @@ try:
 except ImportError:
     HAS_REQUESTS = False
     requests = None  # type: ignore
+
+try:
+    import numpy as np
+
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    np = None  # type: ignore
 
 
 class EmbeddingAPIClient:
@@ -45,6 +52,11 @@ class EmbeddingAPIClient:
         if not HAS_REQUESTS:
             raise RuntimeError(
                 "requests not installed. Run: pip install requests"
+            )
+
+        if not HAS_NUMPY:
+            raise RuntimeError(
+                "numpy not installed. Run: pip install flashback-screenshots[embedding]"
             )
 
         self.base_url = base_url.rstrip("/")

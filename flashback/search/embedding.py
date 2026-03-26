@@ -1,20 +1,39 @@
 """Embedding-based semantic search for flashback."""
 
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
-import numpy as np
 from PIL import Image
 
 from flashback.core.config import Config
 from flashback.core.database import Database, ScreenshotRecord
 from flashback.core.embedding_client import EmbeddingAPIClient
 
+try:
+    import numpy as np
+
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    np = None  # type: ignore
+
+if TYPE_CHECKING:
+    import numpy as np
+
+
+def _ensure_numpy():
+    """Ensure numpy is available, raise helpful error if not."""
+    if not HAS_NUMPY:
+        raise RuntimeError(
+            "numpy not installed. Run: pip install flashback-screenshots[embedding]"
+        )
+
 
 class BaseEmbeddingSearch:
     """Base class for embedding-based search."""
 
     def __init__(self, config: Config = None, db: Database = None):
+        _ensure_numpy()
         self.config = config or Config()
         self.db = db or Database(self.config.db_path)
 
@@ -61,6 +80,7 @@ class TextEmbeddingSearch(BaseEmbeddingSearch):
     """Semantic search using text embeddings (from OCR content)."""
 
     def __init__(self, config: Config = None, db: Database = None):
+        _ensure_numpy()
         super().__init__(config, db)
         self.client: Optional[EmbeddingAPIClient] = None
         self._init_client()
@@ -106,6 +126,7 @@ class ImageEmbeddingSearch(BaseEmbeddingSearch):
     """Visual similarity search using image embeddings."""
 
     def __init__(self, config: Config = None, db: Database = None):
+        _ensure_numpy()
         super().__init__(config, db)
         self.client: Optional[EmbeddingAPIClient] = None
         self._init_client()
@@ -187,6 +208,7 @@ class HybridEmbeddingSearch(BaseEmbeddingSearch):
     """Hybrid search combining text and image embeddings with RRF fusion."""
 
     def __init__(self, config: Config = None, db: Database = None):
+        _ensure_numpy()
         super().__init__(config, db)
         self.text_search = TextEmbeddingSearch(config, db)
         self.image_search = ImageEmbeddingSearch(config, db)

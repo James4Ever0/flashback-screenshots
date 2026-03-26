@@ -3,13 +3,20 @@
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 from PIL import Image
 
 from flashback.core.database import ScreenshotRecord
 from flashback.core.embedding_client import EmbeddingAPIClient
 from flashback.core.logger import timed
 from flashback.workers.base import QueueWorker
+
+try:
+    import numpy as np
+
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    np = None  # type: ignore
 
 
 class EmbeddingWorker(QueueWorker):
@@ -25,6 +32,12 @@ class EmbeddingWorker(QueueWorker):
     def _init_resources(self):
         """Initialize resources in child process."""
         super()._init_resources()
+
+        # Check for numpy dependency
+        if not HAS_NUMPY:
+            raise RuntimeError(
+                "numpy not installed. Run: pip install flashback-screenshots[embedding]"
+            )
 
         self.poll_interval = self.config.get(
             "workers.embedding.work_interval_seconds", 1
