@@ -1,5 +1,7 @@
 #!/bin/bash
 
+conda deactivate
+
 test -f .venv/bin/activate
 if [ $? -ne 0 ]; then
     echo "Virtual env not found at .venv"

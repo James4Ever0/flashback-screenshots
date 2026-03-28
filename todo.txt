@@ -5,3 +5,5 @@
 - [x] add jump to timeline option to screenshot detail page, pass the current screenshot timestamp to the jump to timeline option, pass the timestamp using query parameter
 - [x] expand the jump to timeline time selector box. since it is too small for displaying all params of the time. refer to index.html for help.
 - [x] detect if screen is locked, on linux xorg and windows. if screen is locked, do not take screenshots during this period if config has setting "no_screenshot_on_locked_screen" for screenshot worker. this setting shall be default to true, change example config file, default config in code, and readme after code change.
+- [x] add option to filter timeline via window title, search keyword
+- [x] when viewing nearby screenshots in screenshot detail page, one can specify filter like window title, search keyword.

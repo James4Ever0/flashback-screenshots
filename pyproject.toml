@@ -41,7 +41,7 @@ dependencies = [
 ocr = ["pytesseract>=0.3.10"]
 embedding = ["numpy>=1.24.0"]
 search = ["jieba>=0.42.1"]
-multilingual = ["jieba>=0.42.1"] # spacy for multilingual tokenization
+multilingual = ["spacy>=3.8"] # spacy for multilingual tokenization
 webui = ["fastapi>=0.100.0", "uvicorn>=0.23.0", "jinja2>=3.1.5", "python-multipart>=0.0.6", "aiofiles>=23.0.0", "tqdm>=4.65.0"]
 linux = ["python-xlib>=0.33"]
 windows = ["pygetwindow>=0.0.9", "pywin32>=306"]

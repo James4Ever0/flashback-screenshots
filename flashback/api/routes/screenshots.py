@@ -105,7 +105,8 @@ async def list_screenshots_timeline(
     request: Request,
     before_time: Optional[float] = Query(None, description="Get screenshots before this timestamp"),
     around_time: Optional[float] = Query(None, description="Get screenshots around this timestamp"),
-    window_title: Optional[str] = None,
+    window_title: Optional[str] = Query(None, description="Filter by window title substring"),
+    search_keyword: Optional[str] = Query(None, description="Filter by OCR text substring"),
     limit: int = Query(50, ge=1, le=100),
 ) -> Dict[str, Any]:
     """List screenshots ordered by time (most recent first) for timeline browsing.
@@ -113,44 +114,51 @@ async def list_screenshots_timeline(
     Args:
         before_time: If provided, get screenshots before this timestamp (for pagination)
         around_time: If provided, get screenshots centered around this timestamp
-        window_title: Optional filter by window title
+        window_title: Optional filter by window title substring
+        search_keyword: Optional filter by OCR text substring
         limit: Number of screenshots to return
     """
     db: Database = request.app.state.db
 
-    if around_time:
-        # Get screenshots centered around a specific time
-        records = db.get_screenshots_around_time(around_time, count=limit)
-        # Get total count for reference
-        total = db.count_screenshots_after()
-        # Determine the time range displayed
-        if records:
-            time_from = min(r.timestamp for r in records)
-            time_to = max(r.timestamp for r in records)
+    # Use filtered queries if filters are provided
+    if window_title or search_keyword:
+        if around_time:
+            records = db.get_screenshots_around_time_with_filters(
+                around_time,
+                window_title=window_title,
+                ocr_text=search_keyword,
+                count=limit,
+            )
+        elif before_time:
+            records = db.get_screenshots_ordered_with_filters(
+                before_time=before_time,
+                window_title=window_title,
+                ocr_text=search_keyword,
+                limit=limit,
+            )
         else:
-            time_from = time_to = around_time
-    elif before_time:
-        # Get screenshots before a specific time (pagination)
-        records = db.get_screenshots_ordered(before_time=before_time, limit=limit)
-        total = db.count_screenshots_after()
-        if records:
-            time_from = min(r.timestamp for r in records)
-            time_to = max(r.timestamp for r in records)
-        else:
-            time_from = time_to = before_time
+            records = db.get_screenshots_ordered_with_filters(
+                window_title=window_title,
+                ocr_text=search_keyword,
+                limit=limit,
+            )
     else:
-        # Get most recent screenshots
-        records = db.get_screenshots_ordered(limit=limit)
-        total = db.count_screenshots_after()
-        if records:
-            time_from = min(r.timestamp for r in records)
-            time_to = max(r.timestamp for r in records)
+        if around_time:
+            records = db.get_screenshots_around_time(around_time, count=limit)
+        elif before_time:
+            records = db.get_screenshots_ordered(before_time=before_time, limit=limit)
         else:
-            time_from = time_to = None
+            records = db.get_screenshots_ordered(limit=limit)
 
-    # Apply window title filter if provided
-    if window_title:
-        records = [r for r in records if r.window_title and window_title.lower() in r.window_title.lower()]
+    # Get total count for reference
+    total = db.count_screenshots_after()
+
+    # Determine the time range displayed
+    if records:
+        time_from = min(r.timestamp for r in records)
+        time_to = max(r.timestamp for r in records)
+    else:
+        time_from = time_to = around_time or before_time
 
     # Get oldest timestamp for reference
     oldest_ts = db.get_oldest_timestamp()
@@ -233,8 +241,18 @@ async def get_neighbors_by_id(
     screenshot_id: int,
     before: int = Query(5, ge=0, le=50),
     after: int = Query(5, ge=0, le=50),
+    window_title: Optional[str] = Query(None, description="Filter by window title substring"),
+    search_keyword: Optional[str] = Query(None, description="Filter by OCR text substring"),
 ) -> Dict[str, Any]:
-    """Get screenshots near a screenshot ID (timeline view)."""
+    """Get screenshots near a screenshot ID (timeline view).
+
+    Args:
+        screenshot_id: The ID of the center screenshot
+        before: Number of screenshots to include before the center
+        after: Number of screenshots to include after the center
+        window_title: Optional filter by window title substring
+        search_keyword: Optional filter by OCR text substring
+    """
     db: Database = request.app.state.db
 
     # Get center record
@@ -244,7 +262,17 @@ async def get_neighbors_by_id(
 
     # Get neighbors within window
     window_seconds = max(before, after) * 60 * 5  # Rough estimate: 5 min per screenshot
-    all_neighbors = db.get_neighbors(center.timestamp, window_seconds=window_seconds)
+
+    # Use filtered query if filters are provided
+    if window_title or search_keyword:
+        all_neighbors = db.get_neighbors_with_filters(
+            center.timestamp,
+            window_title=window_title,
+            ocr_text=search_keyword,
+            window_seconds=window_seconds,
+        )
+    else:
+        all_neighbors = db.get_neighbors(center.timestamp, window_seconds=window_seconds)
 
     # Sort and separate
     all_neighbors.sort(key=lambda r: r.timestamp)
@@ -265,6 +293,10 @@ async def get_neighbors_by_id(
 
     return {
         "center_id": screenshot_id,
+        "filters_applied": {
+            "window_title": window_title,
+            "search_keyword": search_keyword,
+        },
         "screenshots": [
             {
                 **_record_to_dict(r),

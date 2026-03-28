@@ -102,7 +102,7 @@ workers:
   window_title:
     enabled: true
     poll_interval_seconds: 1
-    max_screenshot_age_seconds: 30  # Only associate with screenshots taken within this time
+    max_screenshot_age_seconds: 3  # Only associate with screenshots taken within this time
 
 # Search configuration
 search:

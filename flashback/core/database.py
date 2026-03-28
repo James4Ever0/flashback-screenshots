@@ -536,6 +536,167 @@ class Database:
             )
             return [self._row_to_record(row) for row in cursor.fetchall()]
 
+    def search_by_ocr_text(
+        self, text_pattern: str, limit: int = 100
+    ) -> List[ScreenshotRecord]:
+        """Search by OCR text substring."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM screenshots
+                WHERE ocr_text LIKE ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (f"%{text_pattern}%", limit),
+            )
+            return [self._row_to_record(row) for row in cursor.fetchall()]
+
+    def get_screenshots_ordered_with_filters(
+        self,
+        before_time: Optional[float] = None,
+        window_title: Optional[str] = None,
+        ocr_text: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[ScreenshotRecord]:
+        """Get screenshots ordered by timestamp with optional filters.
+
+        Args:
+            before_time: If provided, get screenshots before this timestamp
+            window_title: Optional filter by window title substring
+            ocr_text: Optional filter by OCR text substring
+            limit: Maximum number of screenshots to return
+        """
+        with self._connect() as conn:
+            query = "SELECT * FROM screenshots WHERE 1=1"
+            params = []
+
+            if before_time:
+                query += " AND timestamp < ?"
+                params.append(before_time)
+
+            if window_title:
+                query += " AND window_title LIKE ?"
+                params.append(f"%{window_title}%")
+
+            if ocr_text:
+                query += " AND ocr_text LIKE ?"
+                params.append(f"%{ocr_text}%")
+
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+
+            cursor = conn.execute(query, params)
+            return [self._row_to_record(row) for row in cursor.fetchall()]
+
+    def get_screenshots_around_time_with_filters(
+        self,
+        timestamp: float,
+        window_title: Optional[str] = None,
+        ocr_text: Optional[str] = None,
+        count: int = 50,
+    ) -> List[ScreenshotRecord]:
+        """Get screenshots centered around a specific timestamp with optional filters.
+
+        Args:
+            timestamp: Center timestamp
+            window_title: Optional filter by window title substring
+            ocr_text: Optional filter by OCR text substring
+            count: Total number of screenshots to return
+        """
+        with self._connect() as conn:
+            # Build filter clause
+            filter_clause = ""
+            filter_params = []
+
+            if window_title:
+                filter_clause += " AND window_title LIKE ?"
+                filter_params.append(f"%{window_title}%")
+
+            if ocr_text:
+                filter_clause += " AND ocr_text LIKE ?"
+                filter_params.append(f"%{ocr_text}%")
+
+            half_count = count // 2
+
+            # Get screenshots before (most recent first among those before)
+            before_query = f"""
+                SELECT * FROM screenshots
+                WHERE timestamp < ?{filter_clause}
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """
+            before_params = [timestamp] + filter_params + [half_count]
+            before_cursor = conn.execute(before_query, before_params)
+            before_records = [self._row_to_record(row) for row in before_cursor.fetchall()]
+            before_records.reverse()  # Now in ascending order
+
+            # Get the center screenshot (closest to timestamp)
+            center_query = f"""
+                SELECT * FROM screenshots
+                WHERE timestamp >= ?{filter_clause}
+                ORDER BY timestamp ASC
+                LIMIT 1
+            """
+            center_params = [timestamp] + filter_params
+            center_row = conn.execute(center_query, center_params).fetchone()
+            center_record = self._row_to_record(center_row) if center_row else None
+
+            # Get screenshots after
+            after_limit = half_count if center_record else count - len(before_records)
+            after_query = f"""
+                SELECT * FROM screenshots
+                WHERE timestamp > ?{filter_clause}
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """
+            after_params = [timestamp] + filter_params + [after_limit]
+            after_cursor = conn.execute(after_query, after_params)
+            after_records = [self._row_to_record(row) for row in after_cursor.fetchall()]
+
+            # Combine: before + center + after
+            result = before_records
+            if center_record:
+                result.append(center_record)
+            result.extend(after_records)
+
+            return result
+
+    def get_neighbors_with_filters(
+        self,
+        timestamp: float,
+        window_title: Optional[str] = None,
+        ocr_text: Optional[str] = None,
+        window_seconds: int = 300,
+    ) -> List[ScreenshotRecord]:
+        """Get screenshots within time window of timestamp with optional filters.
+
+        Args:
+            timestamp: Center timestamp
+            window_title: Optional filter by window title substring
+            ocr_text: Optional filter by OCR text substring
+            window_seconds: Time window in seconds
+        """
+        with self._connect() as conn:
+            query = """
+                SELECT * FROM screenshots
+                WHERE timestamp BETWEEN ? AND ?
+            """
+            params = [timestamp - window_seconds, timestamp + window_seconds]
+
+            if window_title:
+                query += " AND window_title LIKE ?"
+                params.append(f"%{window_title}%")
+
+            if ocr_text:
+                query += " AND ocr_text LIKE ?"
+                params.append(f"%{ocr_text}%")
+
+            query += " ORDER BY timestamp"
+
+            cursor = conn.execute(query, params)
+            return [self._row_to_record(row) for row in cursor.fetchall()]
+
     def _row_to_record(self, row: sqlite3.Row) -> ScreenshotRecord:
         """Convert database row to ScreenshotRecord."""
         return ScreenshotRecord(

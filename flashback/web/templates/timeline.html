@@ -195,6 +195,72 @@
             padding-left: 15px;
             margin-left: 5px;
         }
+        .filter-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding-top: 15px;
+            border-top: 1px solid #333;
+        }
+        .filter-controls input[type="text"] {
+            padding: 10px 14px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 14px;
+            width: 200px;
+        }
+        .filter-controls input[type="text"]:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+        .filter-controls button {
+            padding: 10px 16px;
+            font-size: 14px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #fff;
+            cursor: pointer;
+        }
+        .filter-controls button:hover {
+            border-color: #4a9eff;
+        }
+        .filter-controls button.primary {
+            background: #4a9eff;
+            border-color: #4a9eff;
+        }
+        .filter-controls button.primary:hover {
+            background: #3a8eef;
+        }
+        .active-filters {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .filter-tag {
+            background: #4a9eff;
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .filter-tag button {
+            background: none;
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            padding: 0;
+            font-size: 14px;
+            line-height: 1;
+        }
     </style>
 </head>
 <body>
@@ -222,6 +288,14 @@
             </div>
         </div>
 
+        <div class="filter-controls">
+            <input type="text" id="filterWindowTitle" placeholder="Filter by window title...">
+            <input type="text" id="filterSearchKeyword" placeholder="Search in OCR text...">
+            <button class="primary" onclick="applyFilters()">Apply Filters</button>
+            <button onclick="clearFilters()">Clear</button>
+            <div class="active-filters" id="activeFilters"></div>
+        </div>
+
         <div class="time-range-info" id="timeRangeInfo" style="display: none;">
             <div class="main" id="timeRangeMain"></div>
             <div class="sub" id="timeRangeSub"></div>
@@ -242,6 +316,10 @@
         let viewMode = 'recent';  // 'recent', 'before', 'around'
         let currentBeforeTime = null;  // For pagination backwards
         let currentAroundTime = null;  // For jump mode
+        let currentFilters = {
+            windowTitle: '',
+            searchKeyword: ''
+        };
 
         // HTML escape function to prevent XSS
         function escapeHtml(text) {
@@ -284,6 +362,14 @@
             }
             if (params.around_time) {
                 queryParams.append('around_time', params.around_time);
+            }
+
+            // Add filter parameters if set
+            if (currentFilters.windowTitle) {
+                queryParams.append('window_title', currentFilters.windowTitle);
+            }
+            if (currentFilters.searchKeyword) {
+                queryParams.append('search_keyword', currentFilters.searchKeyword);
             }
 
             try {
@@ -443,6 +529,74 @@
             } else {
                 loadRecent();
             }
+        }
+
+        // Filter functions
+        function applyFilters() {
+            const windowTitleInput = document.getElementById('filterWindowTitle');
+            const searchKeywordInput = document.getElementById('filterSearchKeyword');
+
+            currentFilters.windowTitle = windowTitleInput.value.trim();
+            currentFilters.searchKeyword = searchKeywordInput.value.trim();
+
+            renderActiveFilters();
+
+            // Reload with filters
+            if (viewMode === 'recent') {
+                loadRecent();
+            } else if (viewMode === 'before' && currentBeforeTime) {
+                loadScreenshots({ before_time: currentBeforeTime });
+            } else if (viewMode === 'around' && currentAroundTime) {
+                loadScreenshots({ around_time: currentAroundTime });
+            } else {
+                loadRecent();
+            }
+        }
+
+        function clearFilters() {
+            document.getElementById('filterWindowTitle').value = '';
+            document.getElementById('filterSearchKeyword').value = '';
+            currentFilters.windowTitle = '';
+            currentFilters.searchKeyword = '';
+            renderActiveFilters();
+            loadRecent();
+        }
+
+        function renderActiveFilters() {
+            const container = document.getElementById('activeFilters');
+            const tags = [];
+
+            if (currentFilters.windowTitle) {
+                tags.push(`
+                    <div class="filter-tag">
+                        Window: ${escapeHtml(currentFilters.windowTitle)}
+                        <button onclick="removeFilter('windowTitle')">&times;</button>
+                    </div>
+                `);
+            }
+
+            if (currentFilters.searchKeyword) {
+                tags.push(`
+                    <div class="filter-tag">
+                        Keyword: ${escapeHtml(currentFilters.searchKeyword)}
+                        <button onclick="removeFilter('searchKeyword')">&times;</button>
+                    </div>
+                `);
+            }
+
+            container.innerHTML = tags.join('');
+        }
+
+        function removeFilter(filterType) {
+            if (filterType === 'windowTitle') {
+                document.getElementById('filterWindowTitle').value = '';
+                currentFilters.windowTitle = '';
+            } else if (filterType === 'searchKeyword') {
+                document.getElementById('filterSearchKeyword').value = '';
+                currentFilters.searchKeyword = '';
+            }
+            renderActiveFilters();
+            applyFilters();
         }
 
         // Check for time query parameter on page load
