@@ -63,6 +63,7 @@ class WindowTitleWorker(IntervalWorker):
     def _init_resources(self):
         """Initialize resources in child process."""
         super()._init_resources()
+        self.config._set_linux_xorg_display_env()
 
         poll_interval = self.config.get("workers.window_title.poll_interval_seconds", 1)
         self.interval_seconds = poll_interval
@@ -191,14 +192,13 @@ class WindowTitleWorker(IntervalWorker):
             pass
         return None
 
-    @staticmethod
-    def _assign_display_failsafe_close(display: Xlib.display.Display):
+    def _assign_display_failsafe_close(self, display: Xlib.display.Display):
         display_close = copy.copy(display.close)
         def display_close_failsafe():
             try:
                 display_close()
             except Exception as e:
-                print(f"Failed to close display with exception: {e}")
+                self.logger.debug(f"Failed to close display with exception: {e}")
         setattr(display, "close", display_close_failsafe)
         return display
 
@@ -263,7 +263,7 @@ class WindowTitleWorker(IntervalWorker):
         display = None
         try:
             display = Xlib.display.Display()
-            
+
             if display:
                 display = self._assign_display_failsafe_close(display)
 

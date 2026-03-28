@@ -25,6 +25,10 @@ screenshot:
   # Skip screenshots when screen is locked (Linux Xorg/Windows only)
   # Default: true - protects privacy by not capturing when screen is locked
   no_screenshot_on_locked_screen: true
+  linux:
+    env:
+      XAUTHORITY: ~/.Xauthority
+      DISPLAY: :0
 
 # Worker configuration
 workers:

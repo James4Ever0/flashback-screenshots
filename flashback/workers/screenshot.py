@@ -2,8 +2,8 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
+
 
 from PIL import Image
 
@@ -91,6 +91,7 @@ class ScreenshotWorker(IntervalWorker):
     def _init_resources(self):
         """Initialize resources in child process."""
         super()._init_resources()
+        self.config._set_linux_xorg_display_env()
 
         # Now we can access self.config
         self._interval = self.config.screenshot_interval

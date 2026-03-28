@@ -4,8 +4,12 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import platform
 
 from flashback.core.paths import get_config_dir, get_data_dir
+from flashback.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 try:
     import yaml
@@ -28,6 +32,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "backend": "mss",
         # Skip screenshots when screen is locked (Linux Xorg/Windows only)
         "no_screenshot_on_locked_screen": True,
+        "linux": {"env": {"XAUTHORITY": "~/.Xauthority", "DISPLAY": ":0"}},
     },
     "workers": {
         "screenshot": {"enabled": True},
@@ -327,6 +332,29 @@ class Config:
             self._config["viewer"]["command"] = "open"
         elif os.name == "nt":  # Windows
             self._config["viewer"]["command"] = "start"
+        
+    def _set_linux_xorg_display_env(self):
+        if platform.system() == "Linux":
+            # Safely get configuration with defaults
+            screenshot_config = self._config.get('screenshot', {})
+            linux_config = screenshot_config.get('linux', {})
+            env_config = linux_config.get('env', {})
+            xauth = env_config.get('XAUTHORITY', '~/.Xauthority')
+            display = env_config.get('DISPLAY', ':0')
+
+            xauth = os.path.expanduser(xauth)
+
+            # If not set, override.
+            if not os.environ.get("XAUTHORITY", ""):
+                os.environ['XAUTHORITY'] = xauth
+                logger.info(f"Set XAUTHORITY to {xauth}")
+            else:
+                logger.warning(f"XAUTHORITY already set to {os.environ['XAUTHORITY']}")
+            if not os.environ.get("DISPLAY", ""):
+                os.environ['DISPLAY'] = display
+                logger.info(f"Set DISPLAY to {display}")
+            else:
+                logger.warning(f"DISPLAY already set to {os.environ['DISPLAY']}")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by dot-separated key."""
