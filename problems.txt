@@ -1,3 +1,5 @@
-still cannot recognize some active window title on linux kde plasma such as chromium browser, showning unknown
-timeline neightbors does not show ocr results and window title in screenshot detail page
-we may not have DISPLAY=:0 or any necessary env variables in linux for screenshot capture and window title capture. configure them in config file and default config.
+- [x] still cannot recognize some active window title on linux kde plasma such as chromium browser, showning unknown
+- [x] timeline neightbors does not show ocr results and window title in screenshot detail page
+- [x] we may not have DISPLAY=:0 or any necessary env variables in linux for screenshot capture and window title capture. configure them in config file and default config.
+- [x] assign and recognize query params when query input to timeline and search page, so that when one goes back to previous page, the query params are still there, keeping the state. pages are at: flashback/web/templates/{timeline.html,index.html}
+- [x] do query params (the same like previous job), for file flashback/web/templates/detail.html, for the nearby screenshot filter input boxes.

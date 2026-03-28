@@ -349,6 +349,35 @@
             return new Date(str).getTime() / 1000;
         }
 
+        // Update URL with current state
+        function updateURL() {
+            const params = new URLSearchParams();
+
+            // Add view mode
+            params.append('view', viewMode);
+            if (viewMode === 'before' && currentBeforeTime) {
+                params.append('time', currentBeforeTime.toString());
+            } else if (viewMode === 'around' && currentAroundTime) {
+                params.append('time', currentAroundTime.toString());
+            }
+
+            // Add filters
+            if (currentFilters.windowTitle) {
+                params.append('window_title', currentFilters.windowTitle);
+            }
+            if (currentFilters.searchKeyword) {
+                params.append('search_keyword', currentFilters.searchKeyword);
+            }
+
+            // Add limit
+            if (currentLimit !== 50) {
+                params.append('limit', currentLimit.toString());
+            }
+
+            const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+            history.pushState(null, '', newUrl);
+        }
+
         async function loadScreenshots(params = {}) {
             const grid = document.getElementById('screenshotGrid');
             grid.innerHTML = '<div class="loading">Loading...</div>';
@@ -456,7 +485,7 @@
             viewMode = 'before';
             currentBeforeTime = oldestShown;
             currentAroundTime = null;
-
+            updateURL();
             loadScreenshots({ before_time: oldestShown });
         }
 
@@ -486,7 +515,10 @@
             const oldestShown = Math.min(...currentResults.map(r => r.timestamp));
             const span = newestShown - oldestShown;
             const targetTime = newestShown + span;
-
+            viewMode = 'around';
+            currentAroundTime = targetTime;
+            currentBeforeTime = null;
+            updateURL();
             loadScreenshots({ around_time: targetTime });
         }
 
@@ -494,6 +526,7 @@
             viewMode = 'recent';
             currentBeforeTime = null;
             currentAroundTime = null;
+            updateURL();
             loadScreenshots({});
         }
 
@@ -513,12 +546,13 @@
             viewMode = 'around';
             currentAroundTime = jumpTimestamp;
             currentBeforeTime = null;
-
+            updateURL();
             loadScreenshots({ around_time: jumpTimestamp });
         }
 
         function changePageSize() {
             currentLimit = parseInt(document.getElementById('pageSize').value);
+            updateURL();
             // Reload with new limit
             if (viewMode === 'recent') {
                 loadRecent();
@@ -540,6 +574,7 @@
             currentFilters.searchKeyword = searchKeywordInput.value.trim();
 
             renderActiveFilters();
+            updateURL();
 
             // Reload with filters
             if (viewMode === 'recent') {
@@ -559,6 +594,7 @@
             currentFilters.windowTitle = '';
             currentFilters.searchKeyword = '';
             renderActiveFilters();
+            updateURL();
             loadRecent();
         }
 
@@ -599,10 +635,45 @@
             applyFilters();
         }
 
-        // Check for time query parameter on page load
-        function checkTimeQueryParam() {
+        // Check for query parameters on page load
+        function checkQueryParams() {
             const params = new URLSearchParams(window.location.search);
+
+            // Read filter parameters
+            const windowTitleParam = params.get('window_title');
+            const searchKeywordParam = params.get('search_keyword');
             const timeParam = params.get('time');
+            const limitParam = params.get('limit');
+            const viewParam = params.get('view');
+
+            // Set filter inputs and state
+            if (windowTitleParam !== null) {
+                document.getElementById('filterWindowTitle').value = windowTitleParam;
+                currentFilters.windowTitle = windowTitleParam;
+            }
+            if (searchKeywordParam !== null) {
+                document.getElementById('filterSearchKeyword').value = searchKeywordParam;
+                currentFilters.searchKeyword = searchKeywordParam;
+            }
+
+            // Set limit if specified
+            if (limitParam !== null) {
+                const limit = parseInt(limitParam);
+                if (!isNaN(limit) && limit > 0) {
+                    currentLimit = limit;
+                    document.getElementById('pageSize').value = limit.toString();
+                }
+            }
+
+            // Render active filters
+            renderActiveFilters();
+
+            // Handle view parameter
+            if (viewParam === 'recent' || viewParam === 'before' || viewParam === 'around') {
+                viewMode = viewParam;
+            }
+
+            // Handle time parameter (for before/around modes)
             if (timeParam) {
                 const timestamp = parseFloat(timeParam);
                 if (!isNaN(timestamp)) {
@@ -611,19 +682,49 @@
                     const pad = n => n.toString().padStart(2, '0');
                     const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
                     document.getElementById('jumpTime').value = dateStr;
-                    // Load screenshots around this time
-                    viewMode = 'around';
-                    currentAroundTime = timestamp;
-                    currentBeforeTime = null;
-                    loadScreenshots({ around_time: timestamp });
-                    return true;
+
+                    if (viewMode === 'around') {
+                        currentAroundTime = timestamp;
+                        currentBeforeTime = null;
+                        loadScreenshots({ around_time: timestamp });
+                        return true;
+                    } else if (viewMode === 'before') {
+                        currentBeforeTime = timestamp;
+                        currentAroundTime = null;
+                        loadScreenshots({ before_time: timestamp });
+                        return true;
+                    } else {
+                        // If view is recent but time param exists, treat as around for backward compatibility
+                        viewMode = 'around';
+                        currentAroundTime = timestamp;
+                        currentBeforeTime = null;
+                        loadScreenshots({ around_time: timestamp });
+                        return true;
+                    }
                 }
+            }
+
+            // No time param, load based on view mode
+            if (viewMode === 'recent') {
+                loadRecent();
+                return true;
+            } else if (viewMode === 'before' && currentBeforeTime) {
+                loadScreenshots({ before_time: currentBeforeTime });
+                return true;
+            } else if (viewMode === 'around' && currentAroundTime) {
+                loadScreenshots({ around_time: currentAroundTime });
+                return true;
             }
             return false;
         }
 
-        // Load recent screenshots on page load (or jump to time if specified)
-        if (!checkTimeQueryParam()) {
+        // Listen for browser back/forward navigation
+        window.addEventListener('popstate', function(event) {
+            checkQueryParams();
+        });
+
+        // Load screenshots on page load based on query parameters
+        if (!checkQueryParams()) {
             loadRecent();
         }
     </script>

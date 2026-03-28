@@ -274,6 +274,38 @@
             searchKeyword: ''
         };
 
+        // Update URL with current filter state
+        function updateURL() {
+            const params = new URLSearchParams();
+
+            if (neighborFilters.windowTitle) {
+                params.append('window_title', neighborFilters.windowTitle);
+            }
+            if (neighborFilters.searchKeyword) {
+                params.append('search_keyword', neighborFilters.searchKeyword);
+            }
+
+            const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+            history.pushState(null, '', newUrl);
+        }
+
+        // Check for query parameters on page load
+        function checkQueryParams() {
+            const params = new URLSearchParams(window.location.search);
+            const windowTitleParam = params.get('window_title');
+            const searchKeywordParam = params.get('search_keyword');
+
+            if (windowTitleParam !== null) {
+                neighborFilters.windowTitle = windowTitleParam;
+            }
+            if (searchKeywordParam !== null) {
+                neighborFilters.searchKeyword = searchKeywordParam;
+            }
+
+            // Update filter inputs if they exist (they will be updated in renderDetail)
+            return windowTitleParam !== null || searchKeywordParam !== null;
+        }
+
         // Get screenshot ID from URL path
         function getScreenshotId() {
             const path = window.location.pathname;
@@ -435,6 +467,7 @@
             neighborFilters.windowTitle = windowTitleInput ? windowTitleInput.value.trim() : '';
             neighborFilters.searchKeyword = searchKeywordInput ? searchKeywordInput.value.trim() : '';
 
+            updateURL();
             renderActiveFilters();
             loadScreenshot(true);
         }
@@ -442,6 +475,7 @@
         function clearNeighborFilters() {
             neighborFilters.windowTitle = '';
             neighborFilters.searchKeyword = '';
+            updateURL();
             renderActiveFilters();
             loadScreenshot(false);
         }
@@ -485,7 +519,14 @@
             applyNeighborFilters();
         }
 
-        // Load on page load
+        // Listen for browser back/forward navigation
+        window.addEventListener('popstate', function(event) {
+            checkQueryParams();
+            loadScreenshot(true);
+        });
+
+        // Load on page load with query parameters
+        checkQueryParams();
         loadScreenshot();
     </script>
 </body>

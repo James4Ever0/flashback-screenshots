@@ -271,6 +271,7 @@
             if (startDate) params.append('from', startDate);
             if (endDate) params.append('to', endDate);
             if (windowFilter) params.append('window_title', windowFilter);
+            updateURL(params);
 
             document.getElementById('results').innerHTML = '<div class="loading">Searching...</div>';
 
@@ -311,6 +312,51 @@
                     `<div class="no-results">Error: ${escapeHtml(e.message)}</div>`;
             }
         }
+
+        // Update URL with current search parameters
+        function updateURL(params) {
+            const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+            history.pushState(null, '', newUrl);
+        }
+
+        // Check for query parameters on page load
+        function checkQueryParams() {
+            const params = new URLSearchParams(window.location.search);
+            const q = params.get('q');
+            const search_mode = params.get('search_mode');
+            const from = params.get('from');
+            const to = params.get('to');
+            const window_title = params.get('window_title');
+
+            if (q !== null) {
+                document.getElementById('searchInput').value = q;
+            }
+            if (search_mode !== null) {
+                document.getElementById('searchMode').value = search_mode;
+            }
+            if (from !== null) {
+                document.getElementById('startDate').value = from;
+            }
+            if (to !== null) {
+                document.getElementById('endDate').value = to;
+            }
+            if (window_title !== null) {
+                document.getElementById('windowFilter').value = window_title;
+            }
+
+            // If there's a query, auto-search
+            if (q && q.trim()) {
+                search();
+            }
+        }
+
+        // Listen for browser back/forward navigation
+        window.addEventListener('popstate', function(event) {
+            checkQueryParams();
+        });
+
+        // Check query parameters on page load
+        checkQueryParams();
 
         // Event listeners
         document.getElementById('searchInput').addEventListener('keypress', (e) => {
