@@ -191,11 +191,24 @@ class WindowTitleWorker(IntervalWorker):
             pass
         return None
 
+    @staticmethod
+    def _assign_display_failsafe_close(display: Xlib.display.Display):
+        display_close = copy.copy(display.close)
+        def display_close_failsafe():
+            try:
+                display_close()
+            except Exception as e:
+                print(f"Failed to close display with exception: {e}")
+        setattr(display, "close", display_close_failsafe)
+        return display
+
     def _get_x11_window_title(self) -> Optional[str]:
         """Get active window title on X11 using _NET_ACTIVE_WINDOW property."""
         display = None
         try:
             display = Xlib.display.Display()
+            if display:
+                display = self._assign_display_failsafe_close(display)
             root = display.screen().root
 
             # Get _NET_ACTIVE_WINDOW property
@@ -250,6 +263,10 @@ class WindowTitleWorker(IntervalWorker):
         display = None
         try:
             display = Xlib.display.Display()
+            
+            if display:
+                display = self._assign_display_failsafe_close(display)
+
             window = display.get_input_focus().focus
             if window:
                 wm_name = window.get_wm_name()
