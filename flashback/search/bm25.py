@@ -198,9 +198,16 @@ class BM25Search:
         logger.debug("[BM25 Index Build] Step 1/5: Connecting to database...")
         # Database connection is already established in __init__
         logger.debug("[BM25 Index Build] Step 2/5: Reading OCR data from database...")
-        records = list(self.db.get_all_ocr_text())
-        total_records = len(records)
-        logger.debug(f"[BM25 Index Build] Loaded {total_records} records from database")
+
+        old_id_set = set(self.doc_lengths.keys())
+        all_id_set = set(self.db.get_all_ocr_id())
+        logger.debug(f"[BM25 Index Build] Old ID set: {len(old_id_set)}, All ID set: {len(all_id_set)}")
+        selected_id_set = all_id_set.difference(old_id_set)
+        logger.debug(f"[BM25 Index Build] Selected ID set: {len(selected_id_set)}")
+
+        records = list(self.db.get_selected_ocr_text(list(selected_id_set)))
+
+        logger.debug(f"[BM25 Index Build] Found {len(records)} new records from database")
 
         logger.debug("[BM25 Index Build] Step 3/5: Iterating and get new documents")
         record_iterator = records
@@ -208,7 +215,7 @@ class BM25Search:
 
         # Use tqdm for progress bar if available
         if HAS_TQDM:
-            record_iterator = tqdm(records, desc="BM25 Indexing", total=total_records, unit="docs")
+            record_iterator = tqdm(records, desc="BM25 Indexing", total=len(records), unit="docs")
 
         new_docs: dict[int, str] = dict()
         new_doc_ids : set[str] = set()
@@ -225,8 +232,6 @@ class BM25Search:
             else:
                 new_doc_ids.add(doc_id)
                 new_docs[doc_id] = text
-        
-        logger.debug(f"[BM25 Index Build] Found {len(new_docs)} new records from database")
         
         self.update_documents(new_docs)
 

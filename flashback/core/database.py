@@ -427,6 +427,22 @@ class Database:
             result.extend(after_records)
 
             return result
+    
+    def get_all_ocr_id(self) -> List[int]:
+        """Get all OCR IDs for indexing."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT id FROM screenshots WHERE ocr_text IS NOT NULL"
+            )
+            return [row["id"] for row in cursor.fetchall()]
+    
+    def get_selected_ocr_text(self, ids: list[int]) -> List[Tuple[int, str]]:
+        """Get OCR text for selected IDs."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT id, ocr_text FROM screenshots WHERE id IN ({}) AND ocr_text IS NOT NULL".format(",".join(map(str, ids)))
+            )
+            return [(row["id"], row["ocr_text"]) for row in cursor.fetchall()]
 
     def get_all_ocr_text(self) -> List[Tuple[int, str]]:
         """Get all OCR text for indexing."""
