@@ -91,6 +91,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "b": 0.75,
             "default_limit": 50,
             "refresh_interval_seconds": 600,  # BM25 index refresh interval (10 minutes)
+            "db_path": "bm25_index.db",
             "tokenizer": {
                 "backend": "jieba",  # Default tokenizer: "jieba", "spacy", "simple", or "auto"
                 "language_confidence_threshold": 0.7,
@@ -448,6 +449,10 @@ class Config:
     @property
     def webui_port(self) -> int:
         return self.get("webui.port", 8080)
+
+    @property
+    def bm25_index_db_path(self) -> Path:
+        return self.data_dir / self.get("search.bm25.db_path", "bm25_index.db")
 
     @property
     def data_dir(self) -> Path:

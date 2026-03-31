@@ -106,6 +106,8 @@ class BM25Manager:
 
             logger.debug("[BM25 Manager] Step 3/5: Creating BM25Search instance (this will build index)...")
             # Create new instance (this builds the index)
+            
+            # TODO: just simply call "refresh" method on the old one. when refreshing, you may also use a rw_lock there.
             new_instance = BM25Search(self.config, self.db)
 
             logger.debug("[BM25 Manager] Step 4/5: Acquiring lock for atomic swap...")
