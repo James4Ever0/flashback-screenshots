@@ -54,8 +54,8 @@ class BM25IndexDB:
                 )
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_bm25_doc ON bm25_index(doc_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_bm25_term ON bm25_index(term)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_bm25_doc ON bm25_inverted_index(doc_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_bm25_term ON bm25_inverted_index(term)")
 
             # doc lengths table
             conn.execute(
@@ -164,7 +164,7 @@ class BM25Search:
 
         # Index data
         self.doc_lengths: Dict[int, int] = self.index_db.load_doc_lengths()
-        self.total_doc_length, self.N = self.index_db.load_stats()
+        self.N, self.total_doc_length= self.index_db.load_stats()
         self.doc_freqs: Dict[str, int] = self.index_db.load_doc_freqs()
 
         self.inverted_index: Dict[str, Dict[int, int]] = self.index_db.load_inverted_index()
@@ -196,6 +196,9 @@ class BM25Search:
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text into terms using configured tokenizer."""
         return self.tokenizer.tokenize(text)
+    
+    def refresh(self):
+        self._build_index()
 
     def _build_index(self):
         """Build inverted index from database with stepwise logging."""
@@ -216,6 +219,7 @@ class BM25Search:
 
         new_docs: dict[int, str] = dict()
         new_doc_ids : set[str] = set()
+        
         for doc_id, text in record_iterator:
             if not text:
                 # skip empty documents.
@@ -226,12 +230,9 @@ class BM25Search:
             elif doc_id in new_doc_ids:
                 continue
             else:
-                logger.debug(f"[BM25 Index Build] Step 4/5: Adding document {doc_id}...")
                 new_doc_ids.add(doc_id)
-
-            new_docs[doc_id] = text
+                new_docs[doc_id] = text
         
-        # TODO: batch mark those indexed records in some field, so that we can use API to get only the new records that are not indexed yet.
         logger.debug(f"[BM25 Index Build] Found {len(new_docs)} new records from database")
         
         self.update_documents(new_docs)
@@ -256,8 +257,7 @@ class BM25Search:
         updated_invert_index_entries: set[tuple(str, int)]= set()
         updated_invert_index_terms: set[str] = set()
 
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(self.tokenize_documents(documents, new_doc_lengths, new_doc_tokens))
+        asyncio.run(self.tokenize_documents(documents, new_doc_lengths, new_doc_tokens))
 
         new_total_doc_lengths = sum([len(tokens) for tokens in new_doc_tokens.values()])
 
@@ -328,10 +328,3 @@ class BM25Search:
         # Sort by score descending
         results = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return results[:top_k]
-
-    def refresh(self):
-        """Rebuild the index from database."""
-        self.doc_lengths.clear()
-        self.doc_freqs.clear()
-        self.inverted_index.clear()
-        self._build_index()

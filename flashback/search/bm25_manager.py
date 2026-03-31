@@ -11,6 +11,8 @@ from typing import Any, Optional
 from flashback.core.config import Config
 from flashback.core.database import Database
 from flashback.core.logger import get_logger
+from flashback.search.bm25 import BM25Search
+
 
 logger = get_logger("search.bm25_manager")
 
@@ -43,7 +45,7 @@ class BM25Manager:
             "search.bm25.refresh_interval_seconds", 600
         )  # Default 10 minutes
 
-        self._bm25_instance: Optional[Any] = None
+        self._bm25_instance: Optional[BM25Search] = None
         self._last_refresh: float = 0
         self._refresh_lock = threading.RLock()
         self._refresh_thread: Optional[threading.Thread] = None
@@ -95,37 +97,21 @@ class BM25Manager:
         This ensures queries can still use the old instance while the new one
         is being built, preventing any downtime.
         """
-        from flashback.search.bm25 import BM25Search
 
-        logger.debug("[BM25 Manager] Step 1/5: Starting BM25 instance creation...")
         start_time = time.time()
 
         try:
-            logger.debug("[BM25 Manager] Step 2/5: Connecting to database...")
-            # Database is already connected, but log for clarity
-
-            logger.debug("[BM25 Manager] Step 3/5: Creating BM25Search instance (this will build index)...")
-            # Create new instance (this builds the index)
-            
-            # TODO: just simply call "refresh" method on the old one. when refreshing, you may also use a rw_lock there.
-            new_instance = BM25Search(self.config, self.db)
-
-            logger.debug("[BM25 Manager] Step 4/5: Acquiring lock for atomic swap...")
-            # Atomically swap instances
+            logger.debug("[BM25 Manager] Acquiring lock for atomic operation..")
             with self._refresh_lock:
-                logger.debug("[BM25 Manager] Step 5/5: Swapping old instance with new instance...")
-                old_instance = self._bm25_instance
-                self._bm25_instance = new_instance
+                if not self._bm25_instance:
+                    logger.debug("[BM25 Manager] Starting BM25 instance creation...")
+                    self._bm25_instance = BM25Search(self.config, self.db)
+                    logger.debug("[BM25 Manager] BM25Search instance created in %s seconds" % (time.time() - start_time))
+                else:
+                    logger.debug("[BM25 Manager] Refreshing BM25 instance....")
+                    self._bm25_instance.refresh()
+                    logger.debug("[BM25 Manager] BM25 Instance refreshed in %s seconds" % (time.time() - start_time))
                 self._last_refresh = time.time()
-
-            elapsed = time.time() - start_time
-            logger.info(f"[BM25 Manager] BM25 instance refreshed successfully in {elapsed:.2f}s")
-
-            # Clean up old instance after swap (optional, helps with memory)
-            if old_instance is not None:
-                logger.debug("[BM25 Manager] Cleaning up old BM25 instance...")
-                del old_instance
-
         except Exception as e:
             logger.exception(f"[BM25 Manager] Failed to refresh BM25 instance: {e}")
             raise
