@@ -83,7 +83,7 @@ class BM25IndexDB:
                 CREATE TABLE IF NOT EXISTS bm25_corpus_stats (
                     id INTEGER PRIMARY KEY,
                     total_docs INTEGER NOT NULL,
-                    total_doc_length INTEGER NOT NULL
+                    avg_doc_length REAL NOT NULL
                 )
                 """
             )
@@ -91,7 +91,7 @@ class BM25IndexDB:
     def load_stats(self) -> tuple[int, int]:
         """Load corpus statistics from database."""
         with self._connect() as conn:
-            cursor = conn.execute("SELECT total_docs, total_doc_length FROM bm25_corpus_stats WHERE id = 1")
+            cursor = conn.execute("SELECT total_docs, avg_doc_length FROM bm25_corpus_stats WHERE id = 1")
             row = cursor.fetchone()
             if row:
                 return row[0], row[1]
@@ -121,12 +121,12 @@ class BM25IndexDB:
                 ret[row[0]][row[1]] = row[2]
         return ret
     
-    def update_index_transactional(self, total_docs:int, total_doc_length:int, doc_lengths:dict[int, int], invert_index:dict[str, dict[int, int]], doc_freqs:dict[str, int]):
+    def update_index_transactional(self, total_docs:int, avg_doc_length:float, doc_lengths:dict[int, int], invert_index:dict[str, dict[int, int]], doc_freqs:dict[str, int]):
         # update with rollback
         with self._connect() as conn:
             conn.execute("BEGIN")
             try:
-                self._update_stats(conn, total_docs, total_doc_length)
+                self._update_stats(conn, total_docs, avg_doc_length)
                 self._update_invert_index(conn, invert_index)
                 self._update_doc_lengths(conn, doc_lengths)
                 self._update_doc_freqs(conn, doc_freqs)
@@ -135,9 +135,9 @@ class BM25IndexDB:
                 conn.execute("ROLLBACK")
                 raise e
 
-    def _update_stats(self, conn:sqlite3.Connection, total_docs:int, total_doc_length:int):
+    def _update_stats(self, conn:sqlite3.Connection, total_docs:int, avg_doc_length:float):
         """Update corpus statistics in database."""
-        conn.execute("INSERT OR REPLACE INTO bm25_corpus_stats (id, total_docs, total_doc_length) VALUES (1, ?, ?)", (total_docs, total_doc_length))
+        conn.execute("INSERT OR REPLACE INTO bm25_corpus_stats (id, total_docs, avg_doc_length) VALUES (1, ?, ?)", (total_docs, avg_doc_length))
 
     def _update_doc_lengths(self, conn:sqlite3.Connection, doc_lengths:dict[int, int]):
         conn.executemany("INSERT OR REPLACE INTO bm25_doc_lengths (doc_id, length) VALUES (?, ?)", doc_lengths.items())
@@ -164,7 +164,7 @@ class BM25Search:
 
         # Index data
         self.doc_lengths: Dict[int, int] = self.index_db.load_doc_lengths()
-        self.N, self.total_doc_length= self.index_db.load_stats()
+        self.N, self.avg_dl = self.index_db.load_stats()
         self.doc_freqs: Dict[str, int] = self.index_db.load_doc_freqs()
 
         self.inverted_index: Dict[str, Dict[int, int]] = self.index_db.load_inverted_index()
@@ -185,13 +185,6 @@ class BM25Search:
             task = asyncio.create_task(self.tokenize_single_document(doc_id, text, new_doc_lengths, new_doc_tokens))
             tasks.append(task)
         await asyncio.gather(*tasks)
-
-    @property
-    def avg_dl(self):
-        """avg_dl shall be calculated in search/query runtime, since we can sum up "total document length" and "total document count"."""
-        if self.N == 0: return 0
-        ret = self.total_doc_length / self.N
-        return ret
 
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text into terms using configured tokenizer."""
@@ -245,6 +238,7 @@ class BM25Search:
             self._update_documents(documents)
     
     def _update_documents(self, documents:dict[int, str]):
+        if not documents: return
         new_total_doc_lengths = 0
 
         new_doc_lengths: dict[int, int] = dict()
@@ -276,6 +270,10 @@ class BM25Search:
                 updated_invert_index_terms.add(term)
 
         # update main in memory index
+
+        old_total_doc_lengths = self.N * self.avg_dl
+        self.avg_dl = (old_total_doc_lengths + new_total_doc_lengths) / (self.N + len(new_doc_lengths))
+
         self.doc_lengths.update(new_doc_lengths)
         self.N += len(new_doc_lengths)
 
@@ -288,12 +286,10 @@ class BM25Search:
             self.doc_freqs[term] += freq
             doc_freqs_for_db_update[term] = self.doc_freqs[term]
 
-        self.total_doc_length += new_total_doc_lengths
-
         # batch persist to search index db.
         self.index_db.update_index_transactional(
             total_docs=self.N,
-            total_doc_length=self.total_doc_length,
+            avg_doc_length=self.avg_dl,
             doc_lengths=new_doc_lengths,
             invert_index=new_inverted_index,
             doc_freqs=doc_freqs_for_db_update
