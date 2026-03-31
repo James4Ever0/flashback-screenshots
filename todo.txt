@@ -9,3 +9,4 @@
 - [x] when viewing nearby screenshots in screenshot detail page, one can specify filter like window title, search keyword.
 - [ ] use usearch for embedding vector search and store, write example code for crud, compatible with "retention"? 
 - [ ] add methods for document id based removal from bm25 index, so we can perform retention.
+- [ ] handle text casing, convert all into lower case first before bm25 index. (better refer to jieba chinese analyzer first)
