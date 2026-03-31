@@ -201,9 +201,9 @@ class BM25Search:
 
         old_id_set = set(self.doc_lengths.keys())
         all_id_set = set(self.db.get_all_ocr_id())
-        logger.debug(f"[BM25 Index Build] Old ID set: {len(old_id_set)}, All ID set: {len(all_id_set)}")
+        logger.debug(f"[BM25 Index Build] Old IDs count: {len(old_id_set)}, All IDs count: {len(all_id_set)}")
         selected_id_set = all_id_set.difference(old_id_set)
-        logger.debug(f"[BM25 Index Build] Selected ID set: {len(selected_id_set)}")
+        logger.debug(f"[BM25 Index Build] Selected IDs count: {len(selected_id_set)}")
 
         records = list(self.db.get_selected_ocr_text(list(selected_id_set)))
 
