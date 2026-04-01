@@ -10,3 +10,4 @@
 - [ ] use usearch for embedding vector search and store, write example code for crud, compatible with "retention"? 
 - [ ] add methods for document id based removal from bm25 index, so we can perform retention.
 - [ ] handle text casing, convert all into lower case first before bm25 index. (better refer to jieba chinese analyzer first)
+- [ ] create a stats page, which i can view info like screenshot timespan, screenshot per day like github status page, use backend stats api. i can also jump to specific day or time range by clicking each day cell.
