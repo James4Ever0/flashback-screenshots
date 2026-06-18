@@ -1,0 +1,272 @@
+# Multi-Display Screenshot Capture on PC
+
+## Scope
+This document explores the feasibility, APIs, and design trade-offs for capturing screenshots from multiple displays (monitors) simultaneously on desktop platforms. It does not modify the existing plans — it is a reference for a future feature decision.
+
+---
+
+## 1. The Problem
+
+Modern workstations commonly have 2+ displays. A screenshot worker that only captures the "primary" monitor misses activity on secondary displays. The questions are:
+
+1. How do we detect all connected displays?
+2. How do we capture each display?
+3. How do we store/transmit multiple frames per tick?
+4. What is the bandwidth/storage cost?
+5. What about displays that are locked, asleep, or disconnected?
+
+---
+
+## 2. Platform APIs for Multi-Display Detection
+
+### macOS
+```objc
+// CGGetActiveDisplayList — returns array of CGDirectDisplayID
+uint32_t displayCount;
+CGGetActiveDisplayList(0, NULL, &displayCount);  // get count
+CGDirectDisplayID *displays = malloc(displayCount * sizeof(CGDirectDisplayID));
+CGGetActiveDisplayList(displayCount, displays, &displayCount);
+
+// Per-display info
+CGRect bounds = CGDisplayBounds(displays[i]);
+uint32_t width = CGDisplayPixelsWide(displays[i]);
+uint32_t height = CGDisplayPixelsHigh(displays[i]);
+bool isMain = (displays[i] == CGMainDisplayID());
+bool isBuiltin = CGDisplayIsBuiltin(displays[i]);  // laptop screen vs external
+```
+- **Capture**: `CGDisplayCreateImage(displayID)` returns a `CGImageRef` for any specific display.
+- **Quirk**: Display IDs can change across sleep/wake or unplug/replug cycles. Do not cache them long-term.
+- **Rust access**: Via `core-graphics` crate (`CGDisplay`, `CGDisplayCreateImage`).
+
+### Windows
+```cpp
+// EnumDisplayMonitors — enumerate all HMONITOR handles
+BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) {
+    MONITORINFOEX mi;
+    mi.cbSize = sizeof(MONITORINFOEX);
+    GetMonitorInfo(hMonitor, (LPMONITORINFO)&mi);
+    // mi.szDevice — "\\.\\DISPLAY1", "\\.\\DISPLAY2", etc.
+    // mi.rcMonitor — bounding rect in virtual screen coordinates
+    return TRUE;
+}
+EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, 0);
+
+// Alternatively, DXGI (more robust for capture):
+IDXGIFactory1 *pFactory;
+CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory);
+IDXGIAdapter1 *pAdapter;
+for (UINT i = 0; pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND; i++) {
+    IDXGIOutput *pOutput;
+    for (UINT j = 0; pAdapter->EnumOutputs(j, &pOutput) != DXGI_ERROR_NOT_FOUND; j++) {
+        DXGI_OUTPUT_DESC desc;
+        pOutput->GetDesc(&desc);
+        // desc.DeviceName — L"\\.\\DISPLAY1"
+        // desc.DesktopCoordinates — RECT of the monitor
+        // desc.AttachedToDesktop — bool
+    }
+}
+```
+- **Capture via GDI**: `BitBlt` from the device context of each display.
+- **Capture via DXGI**: `IDXGIOutputDuplication` per output — much faster, supports hardware-accelerated capture, but requires DirectX 11+.
+- **Quirk**: Virtual desktop / remote desktop sessions may report displays that are not physical monitors.
+- **Rust access**: `windows` crate for `EnumDisplayMonitors`, or `dxgi` crate for DXGI-based capture.
+
+### Linux — X11
+```c
+// XRandR — modern way to query outputs
+XRRMonitorInfo *monitors = XRRGetMonitors(dpy, root, True, &nmonitors);
+for (int i = 0; i < nmonitors; i++) {
+    // monitors[i].name — output name (atom)
+    // monitors[i].x, monitors[i].y, monitors[i].width, monitors[i].height
+    // monitors[i].primary — bool
+}
+XRRFreeMonitors(monitors);
+
+// Legacy: Xinerama
+XineramaScreenInfo *screens = XineramaQueryScreens(dpy, &screenCount);
+```
+- **Capture**: `XGetImage(dpy, root, x, y, width, height, AllPlanes, ZPixmap)` where `(x,y,width,height)` is the monitor's bounding rect on the root window.
+- **Quirk**: X11 has a single giant root window spanning all monitors. Capturing a monitor means capturing the correct sub-rectangle.
+
+### Linux — Wayland
+- **No standard protocol** for listing outputs in a generic way.
+- **wlroots-based compositors** (Sway, Hyprland, etc.): Use `zwlr_output_manager` protocol to enumerate outputs.
+- **GNOME/Mutter**: `org.gnome.Mutter.DisplayConfig` D-Bus interface.
+- **KDE**: `org.kde.KWin` D-Bus interface.
+- **xdg-desktop-portal**: The screenshot portal captures the "entire desktop" (all displays merged into one image) or a single display — there is no "capture display N" parameter.
+- **grim**: `grim -o <output_name>` captures a specific Wayland output (wlroots only).
+- **Conclusion**: Wayland multi-display capture is highly compositor-dependent. No universal API exists.
+
+---
+
+## 3. Capture Strategies
+
+### Strategy A: Capture All Displays Simultaneously
+- Detect all displays at startup (and re-detect on display topology change).
+- On each tick, iterate over all displays and capture each one.
+- **Pros**: Complete coverage; no missed activity.
+- **Cons**: Bandwidth and storage scale linearly with display count. 3 displays = 3× data.
+
+### Strategy B: Capture Primary Only (default)
+- Capture only `CGMainDisplayID()` / primary monitor.
+- **Pros**: Minimal bandwidth. Matches current plan.
+- **Cons**: Misses secondary display activity.
+
+### Strategy C: Capture Active Display Only
+- Determine which display contains the mouse cursor or focused window.
+- Capture only that display.
+- **Pros**: Intelligent — captures where the user is looking.
+- **Cons**: If the user spans windows across displays, misses part of the activity. More complex logic.
+
+### Strategy D: Virtual Screen Capture (single merged image)
+- Capture the entire virtual desktop spanning all displays as one giant image.
+- **Windows**: `BitBlt` from `GetDC(NULL)` captures the virtual screen.
+- **macOS**: No direct "virtual screen" API — need to composite multiple `CGDisplayCreateImage` results.
+- **Linux X11**: `XGetImage` on the root window with the full bounding rect.
+- **Pros**: One frame per tick; simple.
+- **Cons**: Massive image if displays are high-res. Bandwidth heavy. Dead space between displays (if arranged with gaps).
+
+---
+
+## 4. File Naming & Storage
+
+If capturing N displays per tick, each frame needs a display identifier.
+
+### Option 1: Separate files per display
+```
+buffer/
+  2024-06-06T14-30-00+08-00_display0.jpg   # primary
+  2024-06-06T14-30-00+08-00_display1.jpg   # secondary left
+  2024-06-06T14-30-00+08-00_display2.jpg   # secondary right
+```
+- **Pros**: Individual frames can be ACKed and deleted independently. Easy to view.
+- **Cons**: More files to manage. Transport must handle batching.
+
+### Option 2: Single archive per tick
+```
+buffer/
+  2024-06-06T14-30-00+08-00.zip   # contains display0.jpg, display1.jpg, display2.jpg
+```
+- **Pros**: Atomic send/receive. Fewer files.
+- **Cons**: Cannot ACK individual displays. If one display capture fails, the whole tick is lost or partial.
+
+### Option 3: Single merged image (Strategy D)
+```
+buffer/
+  2024-06-06T14-30-00+08-00.jpg   # one giant virtual desktop image
+```
+- **Pros**: Simplest file management.
+- **Cons**: Massive files. Wasted bandwidth on gaps between displays.
+
+**Recommendation**: Option 1 (separate files) if implementing multi-display. It aligns with the disk ring buffer design and allows per-display tracking.
+
+---
+
+## 5. Configuration
+
+```toml
+[display]
+mode = "primary"         # "primary" | "all" | "active"
+# If mode = "all", which displays to include (empty = all):
+include = ["DISPLAY1", "DISPLAY2"]
+exclude = ["DISPLAY3"]   # e.g., exclude a projector or TV
+
+# Per-display quality override (optional)
+[display.quality]
+primary = 85
+secondary = 60           # lower quality for side monitors to save bandwidth
+```
+
+---
+
+## 6. Bandwidth & Storage Impact
+
+Assumptions: 1920×1080 per display, JPEG quality 80, ~200KB per frame.
+
+| Displays | Frames/tick | Data/tick @ 5s interval | Data/hour | Data/day |
+|----------|-------------|------------------------|-----------|----------|
+| 1 (primary) | 1 | ~200 KB | ~144 MB | ~3.4 GB |
+| 2 | 2 | ~400 KB | ~288 MB | ~6.9 GB |
+| 3 | 3 | ~600 KB | ~432 MB | ~10.3 GB |
+| 4 | 4 | ~800 KB | ~576 MB | ~13.8 GB |
+
+With 4K displays (~800KB/frame):
+| 2 × 4K | 2 | ~1.6 MB | ~1.1 GB | ~27.6 GB |
+
+**Mitigations**:
+- Lower JPEG quality for secondary displays.
+- Adaptive quality: reduce quality when all displays are captured.
+- Detect identical frames (e.g., static desktop) and skip re-transmitting.
+
+---
+
+## 7. Platform-Specific Quirks & Gotchas
+
+### Display Hotplug
+Displays can be connected/disconnected at any time. The worker must:
+- Re-enumerate displays periodically (e.g., every 60 seconds) or on topology change events.
+- Handle the case where a previously-captured display disappears mid-tick.
+- **macOS**: Register for `CGDisplayRegisterReconfigurationCallback`.
+- **Windows**: Handle `WM_DISPLAYCHANGE` (requires a hidden message window) or poll `GetSystemMetrics(SM_CMONITORS)`.
+- **Linux X11**: Listen for RandR events (`RRScreenChangeNotify`).
+- **Linux Wayland**: Compositor-specific. wlroots has `zwlr_output_manager` events.
+
+### Display Lock State Per-Monitor
+- On Windows, all displays share the same session lock state. If locked, all are locked.
+- On macOS, same — session lock applies to all displays.
+- On Linux (X11/Wayland), same.
+- **Exception**: Some setups use "presenter mode" where the laptop screen shows presenter notes and the projector shows slides. The lock state question is per-session, not per-display.
+
+### DPI / Scaling
+- **Windows**: Displays may have different DPI scaling (100%, 125%, 150%, 200%). Capturing at the pixel level gives the raw resolution; the application must not assume all displays have the same DPI.
+- **macOS**: Retina displays report "logical" vs "physical" resolutions. `CGDisplayCreateImage` returns the full physical resolution (e.g., 3840×2160 for a 1920×1080 Retina display).
+- **Linux**: X11 handles DPI per-display via `Xft.dpi` or RandR. Wayland compositors handle scaling internally.
+
+### HDR / Wide-Gamut Displays
+- JPEG does not support HDR. Capturing an HDR display and saving as JPEG will result in tonemapped/clipped colors. This is acceptable for observability but worth documenting.
+- For color-accurate capture, PNG or AVIF would be needed — but that increases size significantly.
+
+---
+
+## 8. Implementation Recommendation (if added to plans)
+
+### Phase 1: Primary-only (current plan)
+Keep the default as primary-only capture. Multi-display is a config opt-in.
+
+### Phase 2: "All displays" mode
+When `display.mode = "all"`:
+1. On startup: enumerate displays, assign indices (0 = primary, 1, 2, ...).
+2. On each tick: capture each display in sequence (or parallel via `tokio::task::spawn_blocking`).
+3. Write each to disk buffer with display suffix in filename.
+4. Transport sends each file individually, awaits ACK, deletes.
+
+### Phase 3: Display topology change detection
+Register for hotplug events per platform. Re-enumerate and update display list. Log changes.
+
+### What to defer
+- "Active display only" mode (Strategy C) — requires cursor tracking or focused-window tracking per display. Complex.
+- Single merged virtual screen (Strategy D) — high bandwidth, low value.
+- Per-display quality settings — nice-to-have after basic multi-display works.
+
+---
+
+## 9. Cross-Platform Summary Table
+
+| Capability | macOS | Windows | Linux X11 | Linux Wayland |
+|------------|-------|---------|-----------|---------------|
+| Enumerate displays | CGGetActiveDisplayList | EnumDisplayMonitors / DXGI | XRRGetMonitors | Compositor-specific |
+| Capture specific display | CGDisplayCreateImage | BitBlt per HDC / DXGI dup | XGetImage sub-rect | grim -o (wlroots only) |
+| Hotplug detection | CGDisplayRegisterReconfigurationCallback | WM_DISPLAYCHANGE | RRScreenChangeNotify | Compositor-specific |
+| Primary display | CGMainDisplayID() | GetMonitorInfo primary flag | XRRGetMonitors primary | Compositor-specific |
+| Builtin vs external | CGDisplayIsBuiltin | No direct API | No direct API | No direct API |
+| Virtual screen capture | Composite manually | GetDC(NULL) | XGetImage root full | Portal gives merged |
+
+---
+
+## 10. Open Questions
+
+1. Should the server UI show displays side-by-side or as separate streams?
+2. How should the server store multi-display frames? Same directory with suffix, or subdirectories per display?
+3. Should there be a "capture only when display content changes" deduplication feature to save bandwidth?
+4. How do we handle displays with different refresh rates? (Capture at fixed interval, not VSync.)
+5. What about displays in portrait orientation? (Just capture the rotated rectangle — the image will have width < height.)

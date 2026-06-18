@@ -1,0 +1,297 @@
+# Plan: android-go-bootstrap-su
+
+A statically-linked Go binary that runs as a background screenshot service on rooted Android devices.
+Unlike the Kotlin MediaProjection approach, this binary captures screenshots via Android's
+`/system/bin/screencap` binary executed through `su`, eliminating the need for MediaProjection
+permission dialogs and making the service fully headless after initial root grant.
+
+---
+
+## 1. Project Layout
+
+```
+android-go-bootstrap-su/
+├── go.mod                          // module: android-go-bootstrap-su
+├── go.sum                          // generated
+├── plan.txt                        // this file
+├── config.toml.example             // example configuration
+├── cmd/
+│   └── screenshot-worker/
+│       └── main.go                 // cobra CLI entrypoint
+├── internal/
+│   ├── config/
+│   │   └── config.go               // TOML config: server, capture, buffer, client, root
+│   ├── root/
+│   │   └── root.go                 // root/su detection, permission request
+│   ├── capture/
+│   │   └── capture.go              // screencap via su, no MediaProjection
+│   ├── screencap/
+│   │   └── screencap.go            // thin wrapper around /system/bin/screencap
+│   ├── session/
+│   │   └── session.go              // screen lock / display state via su dumpsys
+│   ├── buffer/
+│   │   └── buffer.go               // disk ring buffer (same pattern as go-bootstrap)
+│   ├── transport/
+│   │   └── transport.go            // websocket transport (same pattern as go-bootstrap)
+│   ├── briefing/
+│   │   └── briefing.go             // SERVICE_BRIEFING JSON output
+│   └── logging/
+│       └── logging.go              // zerolog setup
+```
+
+---
+
+## 2. CLI Commands (cobra, same style as go-bootstrap)
+
+| Command | Purpose |
+|---------|---------|
+| `screenshot-worker daemon [-c config.toml]` | Run the background capture + upload service |
+| `screenshot-worker test-root` | Check if root/su is available, exit 0/1 |
+| `screenshot-worker test-screencap [-o out.png]` | Capture one screenshot via screencap and save |
+| `screenshot-worker test-lock` | Print screen lock state (LOCKED / UNLOCKED) |
+| `screenshot-worker status` | Print SERVICE_BRIEFING JSON once and exit |
+
+---
+
+## 3. Root Detection (`internal/root`)
+
+```go
+// CheckRoot runs "su -c echo test" and returns true if exit code == 0.
+func CheckRoot() bool
+
+// RequestRoot prints a message to stderr asking the user to grant root
+// via their superuser app (Magisk, KernelSU, etc.).
+func RequestRoot()
+
+// RequireRoot calls CheckRoot, then RequestRoot if false, then exits.
+func RequireRoot()
+```
+
+Behavior: On first start, if `su` fails, print:
+```
+Root access is required. Please grant root permission in your superuser app.
+Waiting 10 seconds before retry...
+```
+Retry every 10s up to 60s, then exit with error.
+
+---
+
+## 4. Screenshot Capture (`internal/screencap`, `internal/capture`)
+
+No MediaProjection. No Android APIs. Pure shell via `su`.
+
+```go
+// Capture writes a screenshot to a temp path via screencap, then reads the bytes.
+func Capture(displayID int, outputPath string) ([]byte, error)
+```
+
+Shell flow (matching `screenshot.py`):
+1. `su -c "/system/bin/screencap -p -d <display_id> <tmp_path>"`
+2. `su -c "cp <tmp_path> <output_path>"`
+3. `su -c "chown $(whoami):$(whoami) <output_path>"`   // restore perms
+4. `su -c "rm -f <tmp_path>"`
+5. Read file bytes from Go, return JPEG/PNG bytes
+
+Notes:
+- `-d` flag requires Android 11+ (API 30). For older devices, omit `-d`.
+- screencap outputs PNG. Convert to JPEG in Go to control quality.
+- Temp path: `/data/local/tmp/go_screenshot_<pid>_<nonce>.png`
+- Output path: under buffer dir (managed by `internal/buffer`)
+
+---
+
+## 5. Screen Lock / Display State (`internal/session`)
+
+No Android KeyguardManager. Use `dumpsys` via `su`:
+
+```go
+// IsLocked checks if the screen is locked via dumpsys window/keyguard.
+func IsLocked() (bool, error)
+```
+
+Implementation:
+- `su -c "dumpsys window"` → grep for `mDreamingLockscreen=true` or `showing=true` on keyguard
+- `su -c "dumpsys deviceidle"` → check screen on/off state as fallback
+- Cache result for 1s to avoid spamming shell commands
+
+Skip capture when locked or screen off, same logic as Kotlin service.
+
+---
+
+## 6. Config File (`internal/config`)
+
+TOML format, extending go-bootstrap with Android/root-specific fields:
+
+```toml
+[server]
+url = "ws://localhost:8080/ws"
+
+[capture]
+interval_sec = 5
+quality = 80
+display_id = 0            # display to capture (0 = main). "focused" supported later.
+
+[buffer]
+max_files = 1000
+path = "/data/local/tmp/go-screenshot-buffer"   # default temp buffer dir
+
+[client]
+name = "android-device"
+log_level = "info"
+log_file = ""             # empty = stdout only
+
+[root]
+auto_request = true       # if false, exit immediately when root missing
+retry_interval_sec = 10   # seconds between root retry attempts
+max_retry_sec = 60        # total time to wait for root grant
+```
+
+---
+
+## 7. Daemon Loop (`cmd/screenshot-worker/main.go`)
+
+```
+1. Load config
+2. Setup logging
+3. RequireRoot() -- blocks until root granted or timeout
+4. Init buffer
+5. Init transport client
+6. Start briefing ticker (outputs SERVICE_BRIEFING every N seconds)
+7. Start capture loop (ticker-based, skips when locked/off)
+8. Start transport loop (websocket drain, independent)
+9. Block on SIGINT/SIGTERM
+10. Graceful shutdown
+```
+
+---
+
+## 8. SERVICE_BRIEFING Output (`internal/briefing`)
+
+Every `briefing_interval_sec` (default 3), print a single line to stdout:
+
+```
+SERVICE_BRIEFING {"status":"running","uptime_ms":45000,"captures":9,"buffer_files":3,"buffer_bytes":245760,"websocket_connected":true,"frames_sent":6,"last_capture_ms":2000,"last_send_ms":3500,"screen_locked":false,"network_type":"WiFi","last_error":"","display_id":0,"client_name":"android-device","timestamp":1717823456789}
+```
+
+This line is designed to be:
+- Captured by logcat filter (`logcat | grep SERVICE_BRIEFING`)
+- Parsed by the Kotlin app's diagnostic page (read from logcat or pipe)
+- Human-readable prefix + machine-parseable JSON
+
+Fields:
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | "running", "stopped", "error", "waiting_root" |
+| `uptime_ms` | int | Service uptime in milliseconds |
+| `captures` | int | Total screenshots captured this session |
+| `buffer_files` | int | Files currently in disk buffer |
+| `buffer_bytes` | int | Total bytes in disk buffer |
+| `websocket_connected` | bool | Current WebSocket connection state |
+| `frames_sent` | int | Total frames uploaded this session |
+| `last_capture_ms` | int | Milliseconds since last capture (0 = never) |
+| `last_send_ms` | int | Milliseconds since last successful upload (0 = never) |
+| `screen_locked` | bool | Whether screen is currently locked |
+| `network_type` | string | "WiFi", "Cellular", "None", "Unknown" |
+| `last_error` | string | Most recent error message (empty if none) |
+| `display_id` | int | Display being captured |
+| `client_name` | string | Client identifier from config |
+| `timestamp` | int | Unix epoch millis of this briefing |
+
+---
+
+## 9. WebSocket Transport (`internal/transport`)
+
+Identical pattern to go-bootstrap:
+- `transport.NewClient(url, name, buffer)`
+- `client.Run(ctx)` — connect loop with exponential backoff
+- `client.Stop()` — graceful disconnect
+- Frame format: `{"type":"frame","timestamp":123,"filename":"...","data":"<base64>"}`
+- Handle server `ping` → `pong`, `ack`
+- Independent from capture — capture never blocks on network
+
+Add WiFi-only upload support (same as Kotlin app):
+- Check active network type before sending
+- If `wifi_only_upload = true` and not on WiFi/Ethernet, skip sending and log
+
+---
+
+## 10. Disk Buffer (`internal/buffer`)
+
+Same ring buffer pattern as go-bootstrap:
+- Directory-based FIFO queue
+- `Write(timestamp, data)` — saves file, evicts oldest if over max_files
+- `Oldest()` — returns (filename, bytes, error)
+- `Remove(filename)` — deletes file
+- `Len()` — file count
+- `TotalSize()` — total bytes
+- Filenames: nanosecond timestamps (e.g. `1717823456789012345.jpg`)
+
+---
+
+## 11. Build Instructions
+
+Cross-compile static binary for Android:
+
+```bash
+# Android ARM64 (most common)
+GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o screenshot-worker-android-arm64 ./cmd/screenshot-worker
+
+# Android ARMv7
+GOOS=android GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -ldflags="-s -w" -o screenshot-worker-android-arm ./cmd/screenshot-worker
+
+# Android x86_64 (emulator)
+GOOS=android GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o screenshot-worker-android-amd64 ./cmd/screenshot-worker
+```
+
+Deployment:
+```bash
+adb push screenshot-worker-android-arm64 /data/local/tmp/screenshot-worker
+adb shell su -c "chmod +x /data/local/tmp/screenshot-worker"
+adb shell su -c "/data/local/tmp/screenshot-worker daemon -c /data/local/tmp/config.toml"
+```
+
+---
+
+## 12. Integration with Kotlin App
+
+The Kotlin app can:
+1. Push the binary to `/data/local/tmp/` or app-private dir
+2. Push a generated `config.toml`
+3. Start the binary via `Runtime.getRuntime().exec("su -c /data/local/tmp/screenshot-worker daemon ...")`
+4. Read `SERVICE_BRIEFING` lines from the process stdout/logcat
+5. Parse JSON and display in the diagnostic page
+6. Stop the binary via `kill` command through `su`
+
+This gives the Kotlin app a root-powered screenshot backend that:
+- Never shows MediaProjection dialogs
+- Survives across sessions (root grant is persistent)
+- Is independent from the Android service lifecycle
+- Provides rich diagnostics via parseable stdout
+
+---
+
+## 13. File Checklist
+
+| # | File | Description |
+|---|------|-------------|
+| 1 | `go.mod` / `go.sum` | Go module definition |
+| 2 | `config.toml.example` | Example configuration |
+| 3 | `cmd/screenshot-worker/main.go` | Cobra CLI + daemon orchestration |
+| 4 | `internal/config/config.go` | TOML config load/validate/default |
+| 5 | `internal/root/root.go` | su detection, permission request |
+| 6 | `internal/screencap/screencap.go` | /system/bin/screencap wrapper |
+| 7 | `internal/capture/capture.go` | Capture loop, screen-lock skip |
+| 8 | `internal/session/session.go` | Screen lock state via dumpsys |
+| 9 | `internal/buffer/buffer.go` | Disk ring buffer |
+| 10 | `internal/transport/transport.go` | WebSocket client |
+| 11 | `internal/briefing/briefing.go` | SERVICE_BRIEFING JSON output |
+| 12 | `internal/logging/logging.go` | zerolog setup |
+
+---
+
+## 14. Open Questions / Future Work
+
+- `display_id = "focused"` support: requires parsing `dumpsys activity` to find the focused display, similar to Python's `get_active_apps_by_display()`
+- SELinux restrictions on `/data/local/tmp`: may need to write buffer to app-private dir when invoked by the Kotlin app
+- Persistent daemon mode: could add an `install` command that creates an init.d or Magisk service script
+- Heartbeat / watchdog: if the binary crashes, the Kotlin app should detect missing SERVICE_BRIEFING lines and restart

@@ -1,0 +1,47 @@
+connection method:
+
+via http request (can be network resource intensive):
+
+server (database) <- client (screenshot worker)
+
+probe for connection, if connected, send all recent screenshots to server
+
+via websocket
+
+first send the client name then sync data in batch
+
+actively request for latest photos or push photos from client on server side using websocket?
+
+screenshot info:
+
+including focused window & app name? (cannot be done on server side, must on client side)
+including ocr results? (can be done on server side with better models)
+timestamp? (must include with timezone info)
+
+keylogging? (must on client side, but can we do this in a separate binary?)
+
+local file read access? (must on client side, and must be requested from server, also separate or using ssh directly?)
+
+config:
+
+config file, server connection info, storage retention limit, capture interval
+
+platform specific:
+
+linux/macos/windows: mss python? cpp code? golang? rust? better be standalone executable
+android: compile using musl? run with root permission & screencap? or just apk start at system reboot, or system app?
+
+platform inspecific:
+
+must run with minimal presense and maintaince. install and forget. run forever. resilient. rich debugging info with log file. restore connection and connection is back instantly. run as background service. start at boot.
+
+shall we include some encryption? for example, shared aes key, preconfigured on both side. we can configure encryption as none for debugging.
+
+additional notes:
+
+once we connect the server with client using this standalone binary, increasing the observability of AI, we might want an web application hosted on server, syncing everything, and all clients can have shared knowledge and resources. we can connect local ai agents and cloud ai agents to this.
+
+
+---
+
+need to check if the screen is locked or not. if is locked, choose not to capture screenshot.

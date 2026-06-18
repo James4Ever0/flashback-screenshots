@@ -1,0 +1,35 @@
+display a floating round bold circle button to indicate the service is running or not (e.g. green for running, red for stopped)
+
+the button shall be draggable, snappable, adaptive to screen size and orientation
+
+the button shall appear at boot.
+
+think of some libraries for this button
+
+check for floating permission
+
+check if the phone is locked, (screenlock) or display closed if so, skip taking the screenshot till unlocked.
+
+only submit screenshots under wifi (configurable, so it can be done under cellular data)
+
+create a golang static binary for android, (must with su or root permission), run this binary as service without asking for mediaprojection permission per session, check if root available or not, if not, ask for root permission.
+
+refer to android-reference/flashback-android/flashback-termux/flashback/workers/screenshot.py and files related to it to create the golang binary
+
+write the golang code to android-go-bootstrap-su
+
+commandline syntax is like go-bootstrap
+
+golang binary will periodically output service status according to config file, like 3s, with a fixed format in json, prefix or keyword, e.g: SERVICE_BRIEFING {"status": "running"} or {"status": "stopped"} and many more attributes, so that we can capture, parse and display it in diagnostic page.
+
+write a plan for the golang binary (need su) at android-go-bootstrap-su/plan.txt
+
+this binary can also be used in termux service
+
+wiki.termux.com/wiki/Termux-services
+
+run with termux:boot
+
+https://wiki.termux.com/wiki/Termux:Boot
+
+check permissions like foreground activity, background activity and disable "pause this app when it's not in use" in settings

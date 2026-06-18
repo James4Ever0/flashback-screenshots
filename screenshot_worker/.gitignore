@@ -1,0 +1,47 @@
+# === Screenshot Worker — Root .gitignore ===
+
+python-reference
+go-reference
+android-reference
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Binaries / compiled artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+*.obj
+*.bin
+
+# Archives (downloaded reference bundles)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bz2
+*.7z
+
+# Build / distribution directories
+/build/
+/dist/
+/bin/
+/target/
+
+# Claude local settings
+.claude/

@@ -1,0 +1,23 @@
+# === Rust Bootstrap .gitignore ===
+
+# Cargo build output
+/target/
+
+# Cargo.lock is kept for binary workspaces; uncomment next line for libraries
+# /Cargo.lock
+
+# Logs
+*.log
+
+# Backup files
+*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db

@@ -1,0 +1,114 @@
+========================================
+  Network Detection Summary
+  OnePlus CPH2493 / Android 13 (API 33)
+  Cellular-only (WiFi disabled)
+========================================
+
+[Device]
+  Model: CPH2493 (OnePlus / ColorOS)
+  Android: 13 (API 33)
+  Root: KernelSU (/data/adb/ksu/bin in PATH)
+
+[Strategy A] Kernel Routing Table — RELIABLE
+  ip route get 8.8.8.8:
+    8.8.8.8 via 10.16.221.43 dev ccmni1
+  → Egress interface: ccmni1
+  → Inferred: Cellular ✓
+
+  /proc/net/route:
+    ccmni1 0000000A 00000000 0001 ... 000000FF
+    (Destination=10.0.0.0, Mask=255.0.0.0)
+  → Default iface: NOT FOUND
+  ⚠ The default route is NOT 00000000; it's a classful 10.0.0.0/8 route.
+    Our awk '$2=="00000000"' parser fails on this device.
+    Must also match on Flags=0001 with non-zero destination.
+
+[Strategy B] dumpsys connectivity — WORKS (Android 13)
+  Found: "Active default network: 1686"
+  Active network: MOBILE[NR] CONNECTED on ccmni1
+  Transport: CELLULAR
+  Capabilities: SUPL&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&VALIDATED...
+  Link: Up>=18000Kbps Down>=47000Kbps
+
+  All transports found in dumpsys:
+    TRANSPORT_CELLULAR, TRANSPORT_BLUETOOTH, TRANSPORT_WIFI
+
+  WiFi status in dumpsys:
+    → Only NetworkOFFERs exist (no active NetworkAgentInfo)
+    → WiFi is NOT currently connected
+
+  Metered status:
+    → Active data network: NOT explicitly metered/unmetered
+    → IMS networks (ccmni0, ccmni2): IS_UNMETERED
+
+[Strategy C] dumpsys wifi — CORRECT
+  WifiState: 0 (DISABLED)
+  curState: DisabledState
+  mWifiInfo: SSID=<unknown ssid>, IP=null, state=DISCONNECTED
+  → WiFi is OFF
+
+[Strategy C] dumpsys telephony.registry — CORRECT
+  mDataRegState: 0 (IN_SERVICE)
+  mDataRadioTechnology: 14 (LTE)
+  Networks: 中国广电 + 中国移动 (dual SIM)
+  → Cellular data is active
+
+[Strategy D] getprop — Sparse (no WiFi)
+  No dhcp properties (WiFi disabled)
+  gsm.network.type would show NR/LTE
+
+[Interfaces /proc/net/dev]
+  Active (RX>0):
+    ccmni1:  RX=1.2GB TX=126MB  ← default data
+    ccmni0:  RX=224MB TX=26MB   ← IMS (VoLTE)
+    ccmni2:  RX=1.0GB TX=180MB  ← IMS (secondary)
+    wlan0:   RX=869KB TX=613KB  ← WiFi DOWN (stale counters)
+  Inactive (RX=0):
+    ccmni3-20, ccmni-lan, wlan1
+
+[Connectivity Probe]
+  8.8.8.8: REACHABLE (ping)
+  1.1.1.1: REACHABLE (ping)
+
+[Cross-Check Summary]
+  Routing table says:    ccmni1 → Cellular
+  /proc/net/route says:  unknown (parser bug)
+  dumpsys connectivity:  MOBILE[NR] → Cellular
+  dumpsys wifi:          DisabledState → not WiFi
+  dumpsys telephony:     IN_SERVICE → Cellular
+
+  Consensus: CELLULAR ✓
+
+========================================
+  KEY FINDINGS FOR FIX IMPLEMENTATION
+========================================
+
+1. ip route get 8.8.8.8 → dev ccmni1
+   Pattern: ccmni* = Cellular (MediaTek)
+   This is the PRIMARY reliable source.
+
+2. /proc/net/route default-route parser is BROKEN
+   The default route is NOT destination=00000000 on this device.
+   It uses destination=0000000A (10.0.0.0) with mask=000000FF.
+   Fix: look for Flags=0001 (RTF_UP) on the main data interface.
+
+3. dumpsys connectivity "Active default network:" WORKS on Android 13
+   Format: "Active default network: <id>" then NAI block with:
+   - ni{MOBILE[NR] CONNECTED ...}
+   - lp{{InterfaceName: ccmni1 ...}}
+   - nc{[ Transports: CELLULAR ...]}
+   Parser should extract: (a) interface name from lp, (b) transport from nc.
+
+4. dumpsys wifi is definitive for WiFi OFF state
+   WifiState=0 + curState=DisabledState = WiFi disabled
+   Don't rely on cached SSID from connection history.
+
+5. Dual-SIM device shows multiple ccmni* interfaces
+   ccmni0 = IMS (VoLTE) - metered=no, no internet
+   ccmni1 = default data - internet, metered=?
+   ccmni2 = secondary IMS
+   The default route points to ccmni1 specifically.
+
+6. wlan0 has RX/TX counters even when WiFi is OFF
+   Counters are stale (869KB/613KB). Don't use /proc/net/dev
+   counters to infer active network.

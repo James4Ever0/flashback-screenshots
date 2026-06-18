@@ -1,0 +1,26 @@
+# Screenshot Worker Configuration
+
+[server]
+# WebSocket server URL
+url = "ws://localhost:8080/ws"
+# url = "wss://observer.example.com/ws"
+
+[capture]
+# Seconds between screenshots
+interval_sec = 5
+# JPEG quality (1-100)
+quality = 80
+
+[buffer]
+# Maximum number of screenshot files to keep in the disk ring buffer
+max_files = 1000
+# Optional: custom buffer directory (default: platform data dir)
+# path = "/var/lib/screenshot-worker/buffer"
+
+[client]
+# Unique client identifier
+name = "my-pc"
+# Log level: trace, debug, info, warn, error, fatal, panic
+log_level = "info"
+# Optional: log file path (stdout only if empty)
+# log_file = "/var/log/screenshot-worker.log"

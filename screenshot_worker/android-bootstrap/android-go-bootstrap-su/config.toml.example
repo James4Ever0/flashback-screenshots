@@ -1,0 +1,44 @@
+# Screenshot Worker Configuration (Android / su)
+
+[server]
+# WebSocket server URL
+url = "ws://localhost:8080/ws"
+# url = "wss://observer.example.com/ws"
+
+[capture]
+# Seconds between screenshots
+interval_sec = 5
+# JPEG quality (1-100)
+quality = 80
+# Display ID to capture (0 = main display)
+display_id = 0
+
+[buffer]
+# Maximum number of screenshot files to keep in the disk ring buffer
+max_files = 1000
+# Buffer directory (default: /data/local/tmp/go-screenshot-buffer)
+path = ""
+
+[client]
+# Unique client identifier
+name = "android-device"
+# Log level: trace, debug, info, warn, error, fatal, panic
+log_level = "info"
+# Log file path (empty = stdout only)
+log_file = ""
+
+[root]
+# If false, exit immediately when root is not available
+auto_request = true
+# Seconds between root retry attempts
+retry_interval_sec = 10
+# Total time to wait for root grant before giving up
+max_retry_sec = 60
+
+[briefing]
+# How often to print SERVICE_BRIEFING JSON to stdout (seconds)
+interval_sec = 3
+
+[upload]
+# Only upload when connected to WiFi (skip on cellular)
+wifi_only = true

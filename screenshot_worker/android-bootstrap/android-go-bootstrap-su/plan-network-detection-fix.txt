@@ -1,0 +1,271 @@
+# Plan: Fix Network Type Detection in android-go-bootstrap-su
+
+## 1. What Is Broken
+
+The current implementation uses naive string matching against `dumpsys connectivity` output to determine whether the device is on WiFi, Cellular, Ethernet, or offline. There are three layers of breakage:
+
+### 1.1 `dumpsys connectivity` output is version-dependent and ambiguous
+
+**Android 9 (API 28) and below:**
+- `dumpsys connectivity` prints a flat list of `NetworkAgentInfo` objects.
+- The word "WIFI" appears in every entry's `Capabilities` regardless of whether that network is the active default.
+- "CONNECTED" appears as a state label for background networks (e.g., a VPN sitting on top of WiFi).
+- String-matching both words simultaneously produces false positives on WiFi when the active data path is actually cellular.
+
+**Android 10+ (API 29+):**
+- Google rewrote the dumpsys format. `NetworkAgentInfo` is now nested under `NetworkRequests` and `Legacy requests`.
+- The active default network is explicitly labelled `Active default network:` but ONLY on Android 12+ (API 31).
+- On Android 10–11 the label is missing; you must infer the default from `mDefaultRequest` and `mActiveNetwork` pointers.
+- Our code does not parse these structures, so it falls through to `Unknown` or matches a stale entry.
+
+**Android 14+ (API 34+):**
+- `dumpsys connectivity` was refactored again into `ConnectivityService` and `NetworkRanker`.
+- Capabilities are printed as `[TRANSPORT_WIFI NET_CAPABILITY_INTERNET]` style flags.
+- Simple substring search on "WIFI" matches every cached network, not the active one.
+
+### 1.2 `ifconfig wlan0` fallback is unreliable
+
+- Interface naming is OEM-dependent: `wlan0`, `wlan1`, `bond0`, `wl0.1` have all been observed.
+- `ifconfig` is deprecated on Android 10+; many OEM images ship only `ip` from toybox/busybox.
+- Even when `wlan0` exists and has an IP, the device may still route default traffic through cellular (e.g., when WiFi has no internet gateway, or when the user has "mobile data always active" enabled in developer options).
+- Therefore interface presence ≠ active network.
+
+### 1.3 No distinction between "network present" and "default route"
+
+Android maintains multiple networks simultaneously:
+- WiFi may be connected to a local LAN with no internet.
+- Cellular may be the actual default route.
+- A VPN may overlay either.
+
+Our current code reports "WiFi" as soon as it sees the WiFi transport anywhere in `dumpsys`, even when the OS has selected cellular as the default network. This causes the upload-gate to open on WiFi that cannot reach the server, or to block uploads on cellular when the user actually wants them.
+
+---
+
+## 2. Root Causes
+
+| Root Cause | Impact |
+|------------|--------|
+| Relying on a single `dumpsys` command without parsing its structure | Breaks across Android versions |
+| Using substring matching instead of structured field extraction | Matches stale/background networks |
+| Checking interface presence instead of routing table | False positives on tethered/offline WiFi |
+| No caching / re-polling strategy | Spawns a shell every 100 ms in the transport write loop |
+| No fallback chain when `su` is available but a specific command is missing | Hard crashes or silent misclassification |
+
+---
+
+## 3. Proposed Fix Strategies (Ranked by Reliability)
+
+### Strategy A: Parse the default route (Most Reliable)
+
+Instead of asking Android's connectivity service what networks exist, ask the kernel where packets go.
+
+**Command chain:**
+1. `su -c "ip route get 8.8.8.8"`
+   Output: `8.8.8.8 via 192.168.1.1 dev wlan0 ...`
+   The `dev <iface>` field tells us the egress interface for default traffic.
+
+2. Map interface to transport type:
+   - `wlan*` → WiFi
+   - `rmnet_data*`, `ccmni*`, `usb*`, `cellular*` → Cellular
+   - `eth*`, `usb*` (with ethernet driver) → Ethernet
+   - `tun*`, `ppp*` → VPN (treat as unknown / follow underlying)
+
+3. If `ip route get` fails, fall back to `su -c "cat /proc/net/route"` and look for destination `00000000` (0.0.0.0) with mask `00000000`; the interface column reveals the default route.
+
+**Why this works:**
+- The routing table is the ground truth. If the OS selected WiFi as default, `wlan0` appears. If it fell back to cellular, `rmnet_data0` appears.
+- `ip route get` is available on Android 7+ (toybox).
+- `/proc/net/route` is available on every Android version.
+- No parsing of unstable `dumpsys` formats.
+
+**Edge cases to handle:**
+- VPN (`tun0`): the routing table shows `tun0`, but the user probably wants uploads to proceed. We should detect VPN interfaces and treat them as "follow underlying" or just allow uploads.
+- Dual-WiFi (WiFi STA + WiFi Aware): `wlan0` + `wlan1`. Default route still points to `wlan0`.
+- Airplane mode: `ip route get` returns "Network is unreachable". Treat as "None".
+
+---
+
+### Strategy B: Parse `dumpsys connectivity` structurally (Medium Reliability)
+
+If we MUST use `dumpsys` (e.g., to also read network capabilities like metered/unmetered), parse it properly instead of substring matching.
+
+**Android 12+ (API 31+) approach:**
+1. Run `dumpsys connectivity | grep -A 20 "Active default network:"`
+2. Extract the `NetworkAgentInfo` block under that heading.
+3. Read the `Capabilities:` line inside that block.
+4. Look for `[TRANSPORT_WIFI]`, `[TRANSPORT_CELLULAR]`, `[TRANSPORT_ETHERNET]`.
+
+**Android 10–11 (API 29–30) approach:**
+1. Run `dumpsys connectivity | grep -B 5 -A 15 "mDefaultRequest"`
+2. Find the `NetworkAgentInfo` whose `Requests:` list contains `REQUEST: id=..., [ACTIVE] ` (note the space before `[ACTIVE]`).
+3. Read that NAI's `Capabilities`.
+
+**Android 9 and below (API 28-):**
+1. Run `dumpsys connectivity | grep -A 10 "Active default network"` (if present) or look for the NAI with `NetworkRequest[id=..., legacyType=none, [ Capabilities: INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN]]`.
+
+**Why this is secondary:**
+- Still version-dependent and may break on OEM customizations.
+- Requires more shell output parsing than Strategy A.
+- `dumpsys` can be slow (50–200 ms on some devices).
+
+---
+
+### Strategy C: Parse `dumpsys wifi` + `dumpsys telephony.registry` (Fallback)
+
+When Strategy A and B both fail, use service-specific dumpsys.
+
+**WiFi state:**
+```
+su -c "dumpsys wifi | grep 'curState='"
+```
+- `curState=ConnectedState` → WiFi is connected to an AP.
+- `curState=DisconnectedState` → WiFi is not connected.
+- Also check `mWifiInfo` for SSID presence: if SSID is `<none>` or `0x`, WiFi is not connected.
+
+**Cellular state:**
+```
+su -c "dumpsys telephony.registry | grep 'mServiceState'"
+```
+- Look for `mDataRegState=0` (registered for data).
+- If `mDataNetworkType=LTE` or `5G` or `HSPA`, cellular is active.
+
+**Why this is a fallback:**
+- Both services can be disabled or return empty output on some devices.
+- Does not tell you which is the *default* route, only which radios are up.
+
+---
+
+### Strategy D: `getprop` heuristic (Last Resort)
+
+Use Android system properties as a coarse signal.
+
+```
+su -c "getprop dhcp.wlan0.ipaddress"    # non-empty → WiFi has DHCP lease
+su -c "getprop gsm.network.type"        # LTE/5G/HRDP/EDGE → cellular active
+su -c "getprop net.dns1"                # DNS server IP (optional)
+```
+
+**Limitations:**
+- Property names vary by OEM (e.g., `dhcp.wlan0.ipaddress` vs `dhcp.wlan.ipaddress`).
+- A DHCP lease does not mean the network is the default route.
+- Only useful as a tie-breaker when Strategies A–C disagree.
+
+---
+
+## 4. Recommended Implementation
+
+Implement a **cascading detector** with the following priority:
+
+```
+getNetworkType():
+  ├─ Try Strategy A: ip route get 8.8.8.8
+  │   └─ Parse dev=<iface> → WiFi/Cellular/Ethernet/VPN/None
+  ├─ If fails → Strategy B: structured dumpsys connectivity
+  │   └─ Parse Active default network / mDefaultRequest → extract Capabilities
+  ├─ If fails → Strategy C: dumpsys wifi + telephony.registry
+  │   └─ WiFi connected? → WiFi. Else cellular registered? → Cellular.
+  ├─ If fails → Strategy D: getprop heuristic
+  └─ If all fail → "Unknown"
+```
+
+**Additional fixes needed:**
+
+### 4.1 Cache the result
+
+The transport `writeLoop` polls every 100 ms, and the briefing emitter polls every 3 s. Currently both spawn a shell command every tick. Network type does not change on a 100 ms timescale.
+
+- Cache the detected network type for **5 seconds**.
+- Reset cache on any detected change in `dumpsys connectivity` (optional advanced optimization).
+- This reduces shell spam from ~10/sec to ~0.2/sec.
+
+### 4.2 Separate "network type" from "can upload"
+
+Current code conflates the two:
+```go
+blocked := wifiOnly && !(netType == "WiFi" || netType == "Ethernet")
+```
+
+This is correct for the boolean, but the `network_type` field in the briefing should show the *actual* network, not the permitted one. Today it does, but if we add VPN detection, the logic needs to be:
+
+```
+if wifiOnly:
+    canUpload = (underlyingNetwork == WiFi || underlyingNetwork == Ethernet)
+    networkType = displayType  // could be "VPN (WiFi)" or just "WiFi"
+```
+
+### 4.3 Handle VPN explicitly
+
+When Strategy A returns `tun0` or `ppp0`, we should:
+1. Allow upload (the user explicitly chose a VPN tunnel).
+2. Log the VPN interface name.
+3. Optionally try to determine the underlying transport by inspecting the VPN's routing rules (`ip route | grep -v tun0`), but this is complex and often unnecessary.
+
+### 4.4 Add a connectivity probe (optional)
+
+For upload decisions, "being on WiFi" is a proxy for "can reach the server". A better gate is:
+
+```
+if wifiOnly:
+    # Still check we're actually on WiFi
+    if underlying != WiFi/Ethernet:
+        blocked = true
+    else:
+        blocked = false
+```
+
+But optionally add a **TCP connectivity probe** (e.g., attempt to open a TCP connection to the WebSocket server's host:port) before each upload batch. This catches:
+- WiFi connected to a captive portal.
+- WiFi connected but router has no WAN.
+- Cellular with data saver blocking the app.
+
+This probe should be async (non-blocking) and cached for 10–30 s.
+
+---
+
+## 5. Testing / Validation Strategy
+
+To verify the fix works across Android versions without modifying code yet, prepare the following test matrix:
+
+| Test | Command | Expected on WiFi | Expected on Cellular |
+|------|---------|-----------------|----------------------|
+| Routing table | `su -c "ip route get 8.8.8.8"` | `dev wlan0` | `dev rmnet_data0` |
+| Default route | `su -c "cat /proc/net/route" \| grep 00000000` | `Iface=wlan0` | `Iface=rmnet_data0` |
+| dumpsys A12+ | `dumpsys connectivity \| grep "Active default"` | `TRANSPORT_WIFI` | `TRANSPORT_CELLULAR` |
+| dumpsys WiFi | `dumpsys wifi \| grep curState` | `ConnectedState` | `DisconnectedState` |
+| getprop | `getprop dhcp.wlan0.ipaddress` | `192.168.x.x` | empty |
+
+**Devices to test:**
+1. OnePlus / Oppo (ColorOS) — known for aggressive dumpsys truncation.
+2. Samsung (OneUI) — `dumpsys connectivity` is heavily modified.
+3. Pixel (stock Android) — baseline reference.
+4. Xiaomi (HyperOS/MIUI) — may alias `ip` to a restricted binary.
+5. Emulator (Android API 28, 33, 36) — verify version-dependent paths.
+
+**Network state transitions to test:**
+- WiFi ON, connected to internet → "WiFi"
+- WiFi ON, connected to offline LAN → should report "WiFi" (correct per gate logic) but ideally log "no internet"
+- WiFi ON, no AP → Cellular active → "Cellular"
+- Airplane mode → "None"
+- WiFi + VPN → "VPN" or "WiFi (VPN)"
+- Dual SIM cellular → "Cellular" (not "Unknown")
+
+---
+
+## 6. Open Questions
+
+1. Should we expose the underlying transport when a VPN is active? E.g., `network_type: "WiFi (VPN)"` vs just `"VPN"`.
+2. Should the upload gate block on metered WiFi (e.g., tethered hotspot)? `dumpsys connectivity` exposes `NET_CAPABILITY_NOT_METERED` — we could use it.
+3. Should we add a `network_reachable` field to the briefing, populated by a TCP probe to the WebSocket server?
+4. On devices where `ip` is missing, should we bundle a statically-linked `ip` binary, or rely solely on `/proc/net/route`?
+
+---
+
+## Summary
+
+The current network detection is broken because it relies on:
+- Unstable `dumpsys connectivity` text formats.
+- Substring matching that matches background networks.
+- Interface name assumptions (`wlan0`).
+- No concept of "default route" vs "network presence".
+
+The fix is to restructure detection around the **kernel routing table** (`ip route get` / `/proc/net/route`) as the primary source of truth, with `dumpsys` and `getprop` as structured fallbacks. Add caching to reduce shell overhead, and explicitly handle VPN and metered-network edge cases.

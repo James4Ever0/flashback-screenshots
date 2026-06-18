@@ -1,0 +1,38 @@
+# === Go Bootstrap .gitignore ===
+
+screenshot_test.jpg
+
+# Compiled binaries (match package names)
+/screenshot-worker
+/screenshot-worker-static
+
+# Test output directory with generated screenshots & cross-compiled binaries
+/test-output/
+
+# Logs
+*.log
+
+# Go build artifacts
+*.exe
+*.so
+*.dll
+*.dylib
+*.a
+*.o
+*.obj
+*.bin
+
+# Vendor & coverage
+/vendor/
+cover.out
+coverage.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db

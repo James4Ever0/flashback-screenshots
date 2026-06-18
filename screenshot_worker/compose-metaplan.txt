@@ -1,0 +1,94 @@
+# Compose Metaplan
+# Generated from: init_prompt.txt
+# This file lists all derived plans and their relationships.
+
+================================================================================
+PLAN FILES TO BE CREATED (in dependency / execution order)
+================================================================================
+
+0. compatibility-advice.txt
+   - WHAT: Cross-platform compatibility reality check for screenshot capture libraries.
+   - READ THIS FIRST before choosing your capture strategy.
+   - DEPENDENCIES: None.
+   - COVERS: Why `xcap` on Linux is problematic (PipeWire, D-Bus, glibc, Wayland),
+     ranked alternatives, per-platform build advice, static vs dynamic linking.
+
+1. plan-core-simplified.md
+   - WHAT: Minimal viable screenshot worker (Rust binary, WebSocket, capture loop).
+   - START HERE if you want a working prototype in ~5 days.
+   - DEPENDENCIES: compatibility-advice.txt (informs tech choices).
+   - COVERS FROM PROMPT: connection method (WebSocket), screenshot info (timestamp,
+     focused window, app name), config file, platform-independent requirements
+     (background service, auto-reconnect, logging), CLI commands, service installation.
+
+2. plan-core-detailed.md
+   - WHAT: Deep-dive implementation of the core worker with exact crates, APIs,
+     directory layout, milestones.
+   - USE AFTER reading plan-core-simplified.md.
+   - DEPENDENCIES: plan-core-simplified.md (conceptual prerequisite).
+   - COVERS FROM PROMPT: same domain as (1) but with full technical specification.
+
+3. plan-observability-simplified.md
+   - WHAT: High-level web dashboard + AI agent hooks on the server side.
+   - START HERE for the "additional notes" section of the prompt.
+   - DEPENDENCIES: plan-core-simplified.md (needs clients to observe).
+   - COVERS FROM PROMPT: web application for shared knowledge, AI agent connectivity,
+     OCR on server side, shared resources.
+
+4. plan-observability-detailed.md
+   - WHAT: Full architecture for the server platform: React dashboard, REST API,
+     vector DB, RAG, OCR pipeline, deployment via Docker Compose.
+   - USE AFTER reading plan-observability-simplified.md.
+   - DEPENDENCIES: plan-observability-simplified.md (conceptual prerequisite).
+   - COVERS FROM PROMPT: same domain as (3) but with exact stack, schema, milestones.
+
+5. plan-advanced-features.md
+   - WHAT: Keylogging, server-requested file read, application-layer encryption.
+   - ISOLATED because these significantly raise legal/ethical/security stakes.
+   - DEPENDENCIES: plan-core-detailed.md (extends the same binary or spawns a
+     separate daemon).
+   - COVERS FROM PROMPT: keylogging (separate binary), local file read access,
+     encryption (AES shared key + TLS).
+
+6. plan-android-simplified.md
+   - WHAT: Android-specific capture service via APK / MediaProjection.
+   - ISOLATED because Android is a completely different platform (APK, JVM/NDK,
+     different permissions model).
+   - DEPENDENCIES: None (standalone sub-project; shares server protocol only).
+   - COVERS FROM PROMPT: Android platform specifics (root vs APK, screencap,
+     system reboot start).
+
+================================================================================
+NON-RELEVANT / SEPARATED CONCERNS EXPLANATION
+================================================================================
+
+The following items from init_prompt.txt were deliberately moved OUT of the
+"core" plans into their own files because they are either:
+  (a) high-risk surveillance features (keylogging),
+  (b) broadening the scope to a full server platform (web app, AI agents),
+  (c) a different platform with a completely different toolchain (Android),
+  (d) optional defense-in-depth that complicates the MVP (encryption).
+
+- Keylogging          → plan-advanced-features.md (separate binary, legal review)
+- Local file read     → plan-advanced-features.md (whitelist protocol)
+- Encryption          → plan-advanced-features.md (AES-256-GCM optional layer)
+- Web app / AI agents → plan-observability-*.md (server-side platform)
+- Android specifics   → plan-android-simplified.md (APK / Kotlin / MediaProjection)
+
+================================================================================
+SUGGESTED EXECUTION PATHS
+================================================================================
+
+Path A — "MVP First" (recommended)
+  plan-core-simplified.md → plan-core-detailed.md → build & test core
+
+Path B — "Full Stack"
+  plan-core-simplified.md → plan-core-detailed.md
+  → plan-observability-simplified.md → plan-observability-detailed.md
+  → build both client & server
+
+Path C — "Enterprise / Compliance Heavy"
+  Path B → plan-advanced-features.md (add encryption, file read)
+  → legal review → plan-android-simplified.md (mobile fleet)
+
+================================================================================

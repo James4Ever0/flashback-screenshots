@@ -1,0 +1,401 @@
+# GLIBC Compatibility Builds for Screenshot Worker
+
+## The Core Problem
+
+glibc is **backward-compatible** but **not forward-compatible**. A binary built on Ubuntu 24.04 (glibc 2.39) will fail on Ubuntu 22.04 (glibc 2.35) or 16.04 (glibc 2.23) with errors like:
+
+```
+version `GLIBC_2.33' not found
+version `GLIBC_2.34' not found
+```
+
+**Rule**: Build on the **oldest** glibc you want to support. The resulting binary runs on that version and all newer ones.
+
+| Ubuntu Version | glibc Version | Can Run Binary Built On... |
+|----------------|---------------|---------------------------|
+| 16.04 Xenial | 2.23 | 16.04 only (oldest) |
+| 22.04 Jammy | 2.35 | 16.04, 22.04 |
+| 24.04 Noble | 2.39 | 16.04, 22.04, 24.04 |
+
+**Target**: Build on Ubuntu 16.04 → binary runs on 16.04, 22.04, 24.04, and beyond.
+
+---
+
+## Rust's Minimum glibc Requirement
+
+Rust's `x86_64-unknown-linux-gnu` target officially requires **glibc 2.17+** (CentOS 7 era). Ubuntu 16.04's glibc 2.23 satisfies this. However, the Rust toolchain itself may pull in newer symbols if not careful.
+
+Key flags to prevent glibc creep:
+```bash
+RUSTFLAGS="-C link-arg=-Wl,--hash-style=gnu"
+```
+
+This ensures the binary uses the oldest available symbol versions rather than the newest ones.
+
+---
+
+## Approach 1: Custom cross-rs Image (Recommended)
+
+cross-rs uses Docker images for cross-compilation. The default `x86_64-unknown-linux-gnu` image is based on Ubuntu 20.04, which produces binaries requiring glibc 2.31+. We need a custom image based on Ubuntu 16.04.
+
+### Step 1: Create the Custom Dockerfile
+
+```dockerfile
+# Dockerfile.cross-x86_64-ubuntu1604
+# Save as: docker/Dockerfile.cross-x86_64-ubuntu1604
+
+FROM ubuntu:16.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base build tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    build-essential \
+    pkg-config \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust via rustup
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal
+
+# Install xcap 0.4.0 build dependencies
+RUN apt-get update && apt-get install -y \
+    libxcb1-dev \
+    libxrandr-dev \
+    libclang-dev \
+    clang \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install OpenSSL development libs (for tokio-tungstenite TLS)
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up cross-compilation linker (native in this case)
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc
+
+WORKDIR /project
+```
+
+### Step 2: Build the Image
+
+```bash
+docker build \
+  -t screenshot-worker-cross:x86_64-ubuntu16.04 \
+  -f docker/Dockerfile.cross-x86_64-ubuntu1604 .
+```
+
+### Step 3: Configure cross-rs to Use It
+
+Create `Cross.toml` in your project root:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+image = "screenshot-worker-cross:x86_64-ubuntu16.04"
+
+[target.x86_64-unknown-linux-gnu.env]
+passthrough = [
+    "RUSTFLAGS",
+]
+
+# Optional: reduce glibc symbol versions
+[target.x86_64-unknown-linux-gnu.env]
+passthrough = [
+    "RUSTFLAGS=-C link-arg=-Wl,--hash-style=gnu -C link-arg=-Wl,--as-needed",
+]
+```
+
+### Step 4: Build
+
+```bash
+# For x11 variant
+cd rust-bootstrap/x11
+cross build --target x86_64-unknown-linux-gnu --release
+
+# For universal variant
+cd rust-bootstrap/universal
+cross build --target x86_64-unknown-linux-gnu --release
+```
+
+The binary lands at `target/x86_64-unknown-linux-gnu/release/screenshot-worker`.
+
+---
+
+## Approach 2: Standalone Docker Build (No cross-rs)
+
+If you prefer not to use cross-rs, build directly inside the container and extract the binary.
+
+### Dockerfile
+
+```dockerfile
+# Dockerfile.build
+FROM ubuntu:16.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    build-essential \
+    pkg-config \
+    libxcb1-dev \
+    libxrandr-dev \
+    libclang-dev \
+    clang \
+    libssl-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /build
+COPY . /build/
+
+# Build with glibc-minimizing flags
+ENV RUSTFLAGS="-C link-arg=-Wl,--hash-style=gnu -C link-arg=-Wl,--as-needed"
+
+CMD ["cargo", "build", "--release", "--target", "x86_64-unknown-linux-gnu"]
+```
+
+### Build Script
+
+```bash
+#!/bin/bash
+# build-ubuntu1604.sh
+set -e
+
+VARIANT=${1:-x11}  # x11 or universal
+
+docker build -f Dockerfile.build -t screenshot-worker-build:latest .
+
+docker run --rm \
+  -v "$(pwd)/rust-bootstrap/${VARIANT}:/build" \
+  -e RUSTFLAGS="-C link-arg=-Wl,--hash-style=gnu" \
+  screenshot-worker-build:latest \
+  cargo build --release --target x86_64-unknown-linux-gnu
+
+echo "Binary at: rust-bootstrap/${VARIANT}/target/x86_64-unknown-linux-gnu/release/screenshot-worker"
+```
+
+### Extract the Binary
+
+```bash
+./build-ubuntu1604.sh x11
+cp rust-bootstrap/x11/target/x86_64-unknown-linux-gnu/release/screenshot-worker \
+   dist/screenshot-worker-x11-ubuntu1604+
+```
+
+---
+
+## Approach 3: GitHub Actions with Ubuntu 16.04 Container
+
+```yaml
+# .github/workflows/build-ubuntu1604.yml
+name: Build Ubuntu 16.04 Compatible
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-x11:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:16.04
+    steps:
+      - name: Install deps
+        run: |
+          apt-get update
+          apt-get install -y curl ca-certificates build-essential pkg-config \
+            libxcb1-dev libxrandr-dev libclang-dev clang libssl-dev git
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: actions/checkout@v4
+      - name: Build x11
+        working-directory: rust-bootstrap/x11
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--hash-style=gnu"
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-worker-x11-ubuntu1604
+          path: rust-bootstrap/x11/target/x86_64-unknown-linux-gnu/release/screenshot-worker
+```
+
+---
+
+## Verifying glibc Compatibility
+
+### Check What glibc Versions Your Binary Requires
+
+```bash
+# List all GLIBC symbols the binary needs
+objdump -T screenshot-worker | grep GLIBC | sed 's/.*GLIBC_//' | sort -V | uniq
+
+# See the highest required version
+objdump -T screenshot-worker | grep GLIBC | sed 's/.*GLIBC_//' | sort -V | tail -1
+```
+
+**Good output** (built on Ubuntu 16.04):
+```
+2.2.5
+2.3
+2.3.2
+2.3.4
+2.4
+2.7
+2.14
+2.15
+2.17
+2.18
+2.23    <-- highest = glibc 2.23 (Ubuntu 16.04 level)
+```
+
+**Bad output** (built on Ubuntu 24.04):
+```
+...
+2.33
+2.34
+2.35
+2.38
+2.39    <-- fails on anything older than Ubuntu 24.04
+```
+
+### Quick Test with ldd
+
+```bash
+# Check dynamic linking on the build host
+ldd screenshot-worker
+
+# Check for "not found" entries (missing libs)
+ldd screenshot-worker 2>&1 | grep "not found"
+```
+
+### Runtime Test Matrix
+
+```bash
+# Test on each target Ubuntu version
+docker run --rm -v "$PWD:/app" ubuntu:16.04 /app/screenshot-worker test-lock
+docker run --rm -v "$PWD:/app" ubuntu:22.04 /app/screenshot-worker test-lock
+docker run --rm -v "$PWD:/app" ubuntu:24.04 /app/screenshot-worker test-lock
+```
+
+If the 16.04 test passes, the binary is universally compatible.
+
+---
+
+## xcap 0.4.0-Specific Build Deps on Ubuntu 16.04
+
+| Package | 16.04 Availability | Purpose |
+|---------|-------------------|---------|
+| `libxcb1-dev` | Yes | X11 protocol (xcap 0.4.0) |
+| `libxrandr-dev` | Yes | Monitor enumeration (xcap 0.4.0) |
+| `libclang-dev` | Yes (3.8) | bindgen (may need newer) |
+| `libssl-dev` | Yes | tokio-tungstenite TLS |
+| `pkg-config` | Yes | library discovery |
+
+### Potential Issue: clang Version
+
+xcap 0.4.0 uses `bindgen` which requires libclang. Ubuntu 16.04 ships clang 3.8, which may be too old for modern bindgen. If you hit bindgen errors:
+
+```bash
+# Option A: Use LLVM apt repo (still works for 16.04)
+wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+echo "deb http://apt.llvm.org/xenial/ llvm-toolchain-xenial-9 main" \
+  >> /etc/apt/sources.list
+apt-get update
+apt-get install -y clang-9 libclang-9-dev
+ln -sf /usr/bin/clang-9 /usr/bin/clang
+```
+
+Or set env var:
+```bash
+export LIBCLANG_PATH=/usr/lib/llvm-9/lib
+```
+
+### Potential Issue: OpenSSL Version
+
+Ubuntu 16.04 has OpenSSL 1.0.2. `tokio-tungstenite` with `native-tls` links against OpenSSL. The built binary will require the same OpenSSL version at runtime.
+
+**If** you need the binary to run on systems with different OpenSSL versions, use `rustls` instead:
+
+```toml
+# In Cargo.toml, replace native-tls with rustls
+tokio-tungstenite = { version = "0.23", features = ["rustls-tls-native-roots"] }
+```
+
+`rustls` is a pure-Rust TLS implementation — no dynamic OpenSSL linking. This removes the OpenSSL runtime dependency entirely.
+
+---
+
+## Troubleshooting
+
+### "version `GLIBC_2.XX' not found" on target system
+
+**Cause**: Built on too new a system.
+**Fix**: Rebuild using the Ubuntu 16.04 Docker image above.
+
+### "cannot find -lxcb" during cross build
+
+**Cause**: The cross image is missing `libxcb1-dev`.
+**Fix**: Ensure the Dockerfile installs it before building the image.
+
+### bindgen errors about libclang
+
+**Cause**: clang version too old or `LIBCLANG_PATH` not set.
+**Fix**: Install clang-9+ from LLVM repo, set `LIBCLANG_PATH`.
+
+### Binary runs but capture fails with "No protocol specified"
+
+**Cause**: Running as a different user or without `DISPLAY` env var.
+**Fix**: Ensure `DISPLAY=:0` is set. For systemd user services, this is usually inherited.
+
+### File too large after strip
+
+**Cause**: LTO not enabled or debug symbols not stripped.
+**Fix**: Verify `Cargo.toml` has:
+```toml
+[profile.release]
+lto = true
+strip = true
+```
+
+---
+
+## Summary: Minimum Viable Build Command
+
+```bash
+# 1. Build the custom cross image
+docker build -t sw-cross:u1604 -f docker/Dockerfile.cross-x86_64-ubuntu1604 .
+
+# 2. Create Cross.toml
+cat > Cross.toml << 'EOF'
+[target.x86_64-unknown-linux-gnu]
+image = "sw-cross:u1604"
+EOF
+
+# 3. Build
+cd rust-bootstrap/x11
+cross build --target x86_64-unknown-linux-gnu --release
+
+# 4. Verify
+cd ../..
+objdump -T rust-bootstrap/x11/target/x86_64-unknown-linux-gnu/release/screenshot-worker | \
+  grep GLIBC | sed 's/.*GLIBC_//' | sort -V | tail -1
+# Expected: 2.23 or lower
+```
+
+If the highest GLIBC version is 2.23, your binary runs on Ubuntu 16.04, 22.04, 24.04, and any future release.

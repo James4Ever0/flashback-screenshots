@@ -1,0 +1,1 @@
+compare and only capture those different pixels, leaving the rest to be black. config: diff_only, default to false.

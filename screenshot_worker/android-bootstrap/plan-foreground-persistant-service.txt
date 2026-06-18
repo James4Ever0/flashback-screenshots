@@ -1,0 +1,414 @@
+================================================================================
+PLAN: FOREGROUND PERSISTENT SERVICE FOR SCREENSHOT WORKER
+================================================================================
+Target: android-bootstrap/app/src/main/java/com/openmule/screenshotworker/
+Goal: Make ScreenshotService a true persistent foreground service that survives
+      OS killing, device reboot, Doze mode, and aggressive OEM battery management.
+
+================================================================================
+SECTION 1: PERMISSIONS (AndroidManifest.xml)
+================================================================================
+
+CURRENT STATE:
+  - POST_NOTIFICATIONS declared but NEVER checked at runtime
+  - FOREGROUND_SERVICE and FOREGROUND_SERVICE_MEDIA_PROJECTION declared (good)
+  - WAKE_LOCK declared (good)
+  - RECEIVE_BOOT_COMPLETED declared (good)
+  - REQUEST_IGNORE_BATTERY_OPTIMIZATIONS declared (good)
+
+REQUIRED CHANGES:
+
+1a. Add runtime permission for POST_NOTIFICATIONS (Android 13+ / API 33+)
+    In MainActivity.onCreate() or before starting service:
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_POST_NOTIFICATIONS)
+        }
+    }
+
+    Without this, startForeground() throws SecurityException on API 33+ and the
+    service dies immediately. This is the #1 reason the service "does not work at all."
+
+1b. Handle the permission result in MainActivity:
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>,
+                                            grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_POST_NOTIFICATIONS) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                // OK, can now show notification / start foreground service
+            } else {
+                // CRITICAL: Show a dialog explaining that notifications are required
+                // for the foreground service to run. The service CANNOT work without this.
+            }
+        }
+    }
+
+================================================================================
+SECTION 2: FIX SERVICE START BEHAVIOR (ScreenshotService.kt)
+================================================================================
+
+CURRENT BUG:
+    Line 97: flags = START_STICKY
+    Line 99: return super.onStartCommand(intent, flags, startId)
+
+    This does NOT return START_STICKY. super.onStartCommand() in Service class
+    returns START_STICKY_COMPATIBILITY by default. The assignment to `flags` is
+    a no-op because `flags` is a method parameter (local var) and does not
+    affect the return value.
+
+REQUIRED CHANGE:
+    Replace the return statement with an explicit return value:
+
+    return START_REDELIVER_INTENT
+
+    Why START_REDELIVER_INTENT instead of START_STICKY?
+    - MediaProjection requires the original Intent with resultCode and data
+    - START_STICKY would restart with a null intent, which cannot recreate
+      the MediaProjection (the permission token dies with the process)
+    - START_REDELIVER_INTENT redelivers the last intent, giving us a chance
+      to recover if the OS killed us but the token is still valid
+
+    However, MediaProjection tokens DO NOT survive process death. If the app
+    is fully killed by the OS, neither START_STICKY nor START_REDELIVER_INTENT
+    can resurrect the capture. The user MUST re-open the app and re-grant
+    permission. This is an Android security limitation we cannot bypass.
+
+================================================================================
+SECTION 3: SERVICE SELF-RESTART ON DESTRUCTION (ScreenshotService.kt)
+================================================================================
+
+CURRENT STATE:
+    onDestroy() releases resources but does NOTHING to restart the service.
+    When the OS kills the service (memory pressure, battery optimization),
+    it stays dead.
+
+REFERENCE PATTERN (from MyService2.java, ScreenshotService.java, RecPlayService.java):
+    Each service sends a custom broadcast in onDestroy() that triggers
+    BootReceiver/MyReceiver to restart the service via startForegroundService().
+
+REQUIRED CHANGES:
+
+3a. Define a restart broadcast action in ScreenshotService companion object:
+
+    const val ACTION_RESTART_SERVICE = "com.openmule.screenshotworker.RESTART_SERVICE"
+
+3b. In ScreenshotService.onDestroy(), before super.onDestroy(), add:
+
+    override fun onDestroy() {
+        logger.i(TAG, "Service destroying — scheduling restart")
+
+        // Notify that we need restart
+        val restartIntent = Intent(ACTION_RESTART_SERVICE).apply {
+            setPackage(packageName)
+        }
+        sendBroadcast(restartIntent)
+
+        // ... existing cleanup code ...
+        captureJob?.cancel()
+        serviceScope.cancel()
+        transport?.stop()
+        virtualDisplay?.release()
+        imageReader?.close()
+        mediaProjection?.stop()
+        releaseWakeLock()
+
+        super.onDestroy()
+    }
+
+3c. Update BootReceiver to handle ACTION_RESTART_SERVICE:
+
+    class BootReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_BOOT_COMPLETED -> {
+                    // Cannot auto-start MediaProjection service without user interaction.
+                    // Show a notification prompting user to open app.
+                    showBootNotification(context)
+                }
+                ScreenshotService.ACTION_RESTART_SERVICE -> {
+                    // Service was killed by OS. We cannot restart capture automatically
+                    // because MediaProjection token is dead. Show recovery notification.
+                    showRecoveryNotification(context)
+                }
+            }
+        }
+    }
+
+    NOTE: The BootReceiver must be registered in AndroidManifest with BOTH
+    intent filters: BOOT_COMPLETED and the custom ACTION_RESTART_SERVICE.
+
+3d. Update AndroidManifest.xml BootReceiver to remove the restrictive
+    android:permission attribute that blocks custom broadcasts:
+
+    CURRENT (broken for custom broadcasts):
+        android:permission="android.permission.RECEIVE_BOOT_COMPLETED"
+
+    FIX: Remove android:permission from the receiver tag entirely, or use
+    two separate <receiver> declarations. The permission attribute prevents
+    ANY sender without that permission from triggering the receiver — including
+    your own app sending custom restart broadcasts.
+
+    CORRECT:
+        <receiver
+            android:name=".service.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.openmule.screenshotworker.RESTART_SERVICE" />
+            </intent-filter>
+        </receiver>
+
+================================================================================
+SECTION 4: ALARM MANAGER PERIODIC HEALTH CHECK
+================================================================================
+
+CURRENT STATE:
+    No mechanism exists to periodically verify the service is running and
+    restart it if needed.
+
+REFERENCE PATTERN (from MainActivity.java revive()):
+    Uses AlarmManager.setExactAndAllowWhileIdle() with a PendingIntent that
+    starts a foreground service, even in Doze mode.
+
+REQUIRED CHANGES:
+
+4a. Create a new file: ServiceKeepAliveHelper.kt
+
+    object ServiceKeepAliveHelper {
+        private const val ALARM_REQUEST_CODE = 9876
+        private const val INTERVAL_MS = 60_000L  // 1 minute
+
+        fun schedule(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, ScreenshotService::class.java)
+            val pendingIntent = PendingIntent.getForegroundService(
+                context,
+                ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            // For API 23+, use setExactAndAllowWhileIdle to bypass Doze
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + INTERVAL_MS,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setExact(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + INTERVAL_MS,
+                    pendingIntent
+                )
+            }
+        }
+
+        fun cancel(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, ScreenshotService::class.java)
+            val pendingIntent = PendingIntent.getForegroundService(
+                context,
+                ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+        }
+    }
+
+4b. Call ServiceKeepAliveHelper.schedule() in ScreenshotService.onStartCommand()
+    when successfully started, and cancel in onDestroy().
+
+    IMPORTANT: The alarm fires even if the service is already running. In
+    onStartCommand(), check if mediaProjection != null and if so, just
+    call startForeground() again to satisfy the foreground requirement and
+    return START_REDELIVER_INTENT. Do not try to reinitialize capture.
+
+================================================================================
+SECTION 5: WAKE LOCK IMPROVEMENTS
+================================================================================
+
+CURRENT STATE:
+    Wake lock is acquired with a 10-minute timeout and never re-acquired.
+    After 10 minutes, the CPU can sleep and capture stops.
+
+REQUIRED CHANGES:
+
+5a. Remove the timeout or make it very long (e.g., 24 hours), and re-acquire
+    periodically within the capture loop:
+
+    // In acquireWakeLock():
+    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "...").apply {
+        setReferenceCounted(false)
+        acquire()  // No timeout — held until explicitly released
+    }
+
+5b. OR: Re-acquire in the capture coroutine every N captures:
+
+    // In the capture loop or transport loop:
+    if (wakeLock?.isHeld == false) {
+        acquireWakeLock()
+    }
+
+================================================================================
+SECTION 6: NOTIFICATION CHANNEL AND STICKY NOTIFICATION
+================================================================================
+
+CURRENT STATE:
+    Notification channel is created in createNotification() each time.
+    The notification is setOngoing(true) which is good.
+
+REQUIRED CHANGES:
+
+6a. Move notification channel creation to Application.onCreate() so it exists
+    before any service starts. Create a SECOND channel for recovery/boot
+    notifications with IMPORTANCE_HIGH so the user sees it.
+
+6b. Make the foreground notification truly sticky by ensuring it cannot be
+    swiped away (already done via setOngoing(true) + startForeground()).
+
+6c. Add action buttons to the notification for quick Stop:
+
+    // In createNotification():
+    val stopIntent = Intent(this, ScreenshotService::class.java).apply {
+        action = ACTION_STOP
+    }
+    val stopPendingIntent = PendingIntent.getService(
+        this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE
+    )
+    builder.addAction(android.R.drawable.ic_media_pause, "Stop", stopPendingIntent)
+
+6d. Handle ACTION_STOP in onStartCommand():
+
+    if (intent?.action == ACTION_STOP) {
+        stopSelf()
+        return START_NOT_STICKY
+    }
+
+================================================================================
+SECTION 7: BOOT NOTIFICATION (since auto-start is impossible)
+================================================================================
+
+CURRENT STATE:
+    BootReceiver logs but does nothing useful.
+
+REQUIRED CHANGES:
+
+7a. In BootReceiver.onReceive() for BOOT_COMPLETED, show a high-priority
+    notification telling the user to open the app to restart capture.
+    MediaProjection permission cannot be granted programmatically — the user
+    MUST tap the Start button in MainActivity.
+
+7b. The notification should have a PendingIntent that opens MainActivity:
+
+    val openAppIntent = Intent(context, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val pendingIntent = PendingIntent.getActivity(
+        context, 0, openAppIntent,
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+
+================================================================================
+SECTION 8: BATTERY OPTIMIZATION (already partially implemented)
+================================================================================
+
+CURRENT STATE:
+    BatteryOptimizationHelper exists. HomeScreen shows a banner.
+    But there is no check BEFORE starting the service.
+
+REQUIRED CHANGES:
+
+8a. Before calling ScreenshotService.start(), check battery optimization status
+    and warn the user if optimization is enabled. On many OEMs (Xiaomi, Oppo,
+    OnePlus, Samsung), the OS will kill the service within minutes regardless
+    of foreground status unless the app is whitelisted.
+
+8b. Consider adding manufacturer-specific guidance:
+    - Xiaomi: Auto-start permission in Security app
+    - Oppo/OnePlus: Battery -> App battery management -> Don't optimize
+    - Samsung: Battery -> Background usage limits -> Never sleeping apps
+    - Huawei: App launch -> Manage manually -> Enable auto-launch
+
+================================================================================
+SECTION 9: FILE-BY-FILE CHANGE SUMMARY
+================================================================================
+
+AndroidManifest.xml
+  - Remove android:permission from BootReceiver (blocks custom broadcasts)
+  - Add second <intent-filter> for ACTION_RESTART_SERVICE
+  - Verify all existing permissions are correct (they mostly are)
+
+MainActivity.kt
+  - Add runtime POST_NOTIFICATIONS permission check before starting service
+  - Add onRequestPermissionsResult() handler
+
+ScreenshotService.kt
+  - Fix onStartCommand() to explicitly return START_REDELIVER_INTENT
+  - Add ACTION_RESTART_SERVICE broadcast in onDestroy()
+  - Add ACTION_STOP handling in onStartCommand()
+  - Add action button to notification
+  - Fix wake lock to not timeout, or re-acquire periodically
+  - Integrate ServiceKeepAliveHelper.schedule() / cancel()
+
+BootReceiver.kt
+  - Handle ACTION_RESTART_SERVICE
+  - Show boot notification on BOOT_COMPLETED
+  - Show recovery notification on restart request
+  - Actually implement the notifications (currently commented out / empty)
+
+NEW FILE: ServiceKeepAliveHelper.kt
+  - AlarmManager-based periodic restart scheduling
+  - schedule() and cancel() methods
+
+HomeScreen.kt / MainViewModel.kt
+  - Check POST_NOTIFICATIONS before attempting to start
+  - Show clearer warnings when battery optimization is on
+
+================================================================================
+SECTION 10: TESTING CHECKLIST
+================================================================================
+
+[ ] Grant POST_NOTIFICATIONS permission — verify service starts without crash
+[ ] Start service — verify sticky notification appears and cannot be swiped
+[ ] Kill app via swiping from recents — verify notification disappears
+[ ] Verify BootReceiver triggers on boot (emulator: adb shell am broadcast ...)
+[ ] Verify recovery notification appears when service is killed
+[ ] Verify tapping recovery notification opens MainActivity
+[ ] Verify capture resumes after user re-grants MediaProjection
+[ ] Verify wake lock is held during long captures (> 10 min)
+[ ] Verify AlarmManager fires and service handles duplicate start gracefully
+[ ] Test on OEM device with aggressive battery management (Xiaomi, Samsung)
+
+================================================================================
+SECTION 11: KNOWN LIMITATIONS (cannot be worked around)
+================================================================================
+
+1. MediaProjection permission tokens are tied to the process lifetime.
+   If the OS kills the app process, the token is invalidated. The user MUST
+   reopen the app and tap Start to re-grant permission. There is no API
+   to persist or recreate a MediaProjection without user interaction.
+
+2. On Android 12+ (API 31+), foreground services started from the background
+   (e.g., BootReceiver on BOOT_COMPLETED) are heavily restricted. The
+   BootReceiver cannot directly start ScreenshotService. It can only show
+   a notification asking the user to open the app.
+
+3. Some OEMs (Xiaomi, Oppo, Vivo, Huawei) maintain their own kill lists
+   independent of Android's standard behavior. Even with all protections,
+   the app may be killed. The only reliable workaround is:
+   - Disable battery optimization
+   - Enable auto-start in OEM security app
+   - Lock the app in recents
+   - Add to "never sleep" / "protected apps" list
+
+================================================================================
+END OF PLAN
+================================================================================

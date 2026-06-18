@@ -1,0 +1,156 @@
+# Compatibility Advice for Screenshot Worker
+
+## Executive Summary
+
+The `xcap` crate recommended in earlier plans is **not suitable** for a "single static binary, install and forget" goal on Linux. It links against 7+ desktop environment libraries (PipeWire, D-Bus, Wayland, X11, EGL) that cannot be statically linked and create real deployment pain. macOS and Windows fare much better.
+
+This document catalogs what works, what breaks, and what to do instead.
+
+---
+
+## 1. xcap Reality Check
+
+### What xcap links against per platform
+
+| Platform | System Libraries | Build Tools |
+|----------|-----------------|-------------|
+| Linux    | libxcb, libxrandr, libdbus-1, libpipewire-0.3, libwayland, libEGL | pkg-config, libclang-dev |
+| macOS    | CoreGraphics, CoreFoundation, objc2 runtime | Xcode CLI tools |
+| Windows  | GDI32, DXGI (via windows-rs) | MSVC toolchain |
+
+### Linux: The Problems
+
+1. **Heavy runtime dependencies**
+   On Debian/Ubuntu 22.04 or 24.04 you must install:
+   ```bash
+   sudo apt-get install libxcb1 libxrandr2 libdbus-1-3 libpipewire-0.3-0 libwayland-client0 libegl1
+   ```
+   These are **not** present in minimal/server images or Docker containers.
+
+2. **Wayland support is unreliable**
+   The xcap README itself marks Wayland with the symbol meaning "not fully supported in some scenarios." On a default Ubuntu 24.04 GNOME session (Wayland), xcap may silently fail or return partial results depending on the compositor's portal support.
+
+3. **glibc version concerns**
+   If you build on Ubuntu 24.04 and deploy to 22.04, the linked system libraries (especially libpipewire, libwayland) may pull in newer glibc symbols. There is no static-link escape hatch because these are desktop libs that assume dynamic loading.
+
+4. **Cross-compilation is effectively broken**
+   `cross-rs` uses Ubuntu 20.04 base images, which lack PipeWire in standard repositories. The `goose` project (a real-world user) dropped xcap on Linux entirely after months of CI failures. See: https://github.com/aaif-goose/goose/issues/6301
+
+5. **Version lock trap**
+   - xcap 0.4.x: lighter, X11-only, no PipeWire — but no upstream fixes
+   - xcap 0.5.0+: adds PipeWire + zbus + heavy deps — breaks CI and static builds
+   - You cannot stay on 0.4.x forever and still get macOS/Windows bugfixes
+
+### macOS: Acceptable
+- Uses CoreGraphics APIs available since 10.10.
+- The `objc2` dependency is pure Rust; no external Homebrew libraries required.
+- Works on Intel and Apple Silicon.
+
+### Windows: Best Supported
+- Uses `windows-rs` bindings to GDI32/DXGI.
+- No extra runtime libraries needed on Windows 8.1+.
+- Cleanest platform for this crate.
+
+---
+
+## 2. Linux Alternatives Ranked
+
+| Approach | Static Binary? | Wayland? | Dependency Weight | Recommendation |
+|----------|---------------|----------|-------------------|----------------|
+| xcap 0.5+ | NO | Partial | Very Heavy | Avoid for Linux |
+| xcap 0.4.x pinned | NO | No | Medium | Acceptable if X11-only |
+| Shell to `grim` / `scrot` / `maim` | N/A (needs binary) | Yes (grim) | Low | Good fallback |
+| `ashpd` + `xdg-desktop-portal` | NO | Yes | Medium-High | Correct Wayland approach |
+| `x11rb` direct | NO | No | Very Low | Good for X11-only minimal builds |
+| FFmpeg/libav | NO | Yes | Massive | Overkill |
+
+### Recommended Linux Strategy
+
+**Option A: Dual-path implementation (recommended)**
+- Attempt portal-based capture first (`ashpd` + `xdg-desktop-portal`). This is the standard Wayland-compatible approach.
+- Fallback to shelling out to `grim` (Wayland) or `scrot`/`maim` (X11) if the portal is unavailable.
+- This avoids direct PipeWire/D-Bus linkage in your binary.
+
+**Option B: X11-only minimal build**
+- Use `x11rb` (pure Rust X11 protocol, no C libs) or `xcap 0.4.x`.
+- Document: "Wayland sessions require XWayland or use Option A."
+- Produces the smallest, most portable binary.
+
+**Option C: Accept dynamic linking**
+- Use latest `xcap` on Linux.
+- Ship `.deb` / `.rpm` packages that declare runtime dependencies.
+- Abandon the "single static binary" goal for Linux specifically.
+
+---
+
+## 3. Per-Platform Build Advice
+
+### Ubuntu 22.04 / 24.04 (Build or Runtime)
+
+**If using xcap 0.5+:**
+```bash
+# Build dependencies
+sudo apt-get install pkg-config libclang-dev \
+  libxcb1-dev libxrandr-dev libdbus-1-dev \
+  libpipewire-0.3-dev libwayland-dev libegl-dev
+
+# Runtime dependencies
+sudo apt-get install libxcb1 libxrandr2 libdbus-1-3 \
+  libpipewire-0.3-0 libwayland-client0 libegl1
+```
+
+**If using shell-out approach:**
+```bash
+# Runtime only
+sudo apt-get install grim  # Wayland
+# OR
+sudo apt-get install scrot # X11
+```
+
+### musl / Static Linking
+
+- **macOS**: `cargo build --target aarch64-apple-darwin` or `x86_64-apple-darwin`. Fully static for Rust code; system frameworks are always dynamic but universally present.
+- **Windows**: `cargo build --target x86_64-pc-windows-msvc`. Statically links Rust deps; Windows APIs are always there.
+- **Linux + xcap**: **Impossible** for a meaningful static binary. PipeWire, D-Bus, EGL, and Wayland client libraries all require dynamic loading, dlopen, and runtime services.
+- **Linux + shell-out**: Your binary can be statically linked (musl), but the helper binaries (`grim`, `scrot`) must exist on the target system.
+
+### Cross-Compilation
+
+| Target | Tool | Notes |
+|--------|------|-------|
+| `x86_64-unknown-linux-gnu` | Native or cross | Works if target has all runtime libs |
+| `x86_64-unknown-linux-musl` | `cross` | Fails with xcap 0.5+ (PipeWire missing in cross image) |
+| `aarch64-unknown-linux-gnu` | `cross` | Same glibc/lib issues as x86_64 |
+| `x86_64-apple-darwin` | `cargo-zigbuild` or native Mac | OK |
+| `aarch64-apple-darwin` | Native Mac or GitHub Actions | OK |
+| `x86_64-pc-windows-msvc` | `cross` or native Windows | OK |
+
+---
+
+## 4. Decision Matrix
+
+| Your Goal | Recommended Approach |
+|-----------|---------------------|
+| One static binary, all platforms | **Not achievable** on Linux with xcap. Use macOS/Windows with xcap, Linux with shell-out or portal. |
+| Single codebase, accept package deps | Use xcap latest, ship `.deb`/`.rpm`, document apt commands. |
+| Minimal footprint, X11 only | Pin xcap 0.4.x or use `x11rb`. |
+| Correct Wayland support | `ashpd` + `xdg-desktop-portal`, with `grim` fallback. |
+| Headless / CI / Docker | xcap will not work. Use a different architecture (e.g., VNC-based capture). |
+
+---
+
+## 5. Action Items for Plans
+
+- [ ] Replace "xcap" in Linux-specific sections with a dual-path strategy.
+- [ ] Add per-platform dependency documentation to install scripts.
+- [ ] Decide whether to pin xcap to 0.4.x (X11) or drop it for Linux.
+- [ ] Update packaging to use `.deb` dependencies if keeping latest xcap.
+- [ ] Update cross-compilation targets to exclude `musl` for Linux builds.
+
+---
+
+## Sources
+
+- xcap README and dependency list: https://github.com/nashaofu/xcap/blob/master/README.md
+- goose issue #6301 — real project dropping xcap Linux support: https://github.com/aaif-goose/goose/issues/6301
+- xdg-desktop-portal screenshot spec: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Screenshot.html

@@ -1,0 +1,16 @@
+# Screenshot Worker — Python WebSocket Server Dependencies
+#
+# Recommended Python version: 3.11+
+#   Python 3.11 brings modern asyncio features (TaskGroup, exception groups)
+#   and improved typing support that this codebase takes advantage of.
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Or with a virtual environment:
+#   python3.11 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# WebSocket server library — async, standards-compliant, battle-tested.
+websockets==14.2

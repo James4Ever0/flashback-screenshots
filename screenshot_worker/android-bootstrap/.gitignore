@@ -1,0 +1,47 @@
+# === Android Bootstrap .gitignore ===
+
+network-test-results.txt
+
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration
+/local.properties
+local.properties
+
+# IDE
+/.idea
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetEditor.xml
+/.idea/assetWizardSettings.xml
+*.iml
+
+# Kotlin
+.kotlin/
+
+# Android captures / profiling
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS metadata
+.DS_Store
+
+# Logs
+*.log
+
+# Android package artifacts
+*.apk
+*.aab
+*.ap_
+
+# App-level build output (already covered by root build/, but keep explicit)
+/app/build
+/app/release
+/app/debug

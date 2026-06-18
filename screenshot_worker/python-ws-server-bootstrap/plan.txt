@@ -1,0 +1,99 @@
+# Python WebSocket Server Bootstrap — Plan
+
+## Goal
+A simplified Python WebSocket server that receives screenshot frames from both the
+go-bootstrap client and the android-bootstrap client, displays metadata (size,
+timestamp, client name, etc.) without storing images, and maintains the common
+protocol both clients expect.
+
+---
+
+## Client Behavior Comparison
+
+### Go Client (`go-bootstrap/internal/transport/transport.go`)
+
+| Aspect | Behavior |
+|--------|----------|
+| Connect URL | `ws://host:port/ws?name=<clientName>` (query param) |
+| Library | `github.com/gorilla/websocket` |
+| Hello msg | `{"type": "hello", "name": "...", "version": "0.1.0"}` |
+| Frame msg | `{"type": "frame", "timestamp": <unix_seconds>, "filename": "...", "data": <[]byte>}` |
+| Data encoding | Go's `json.Marshal` auto-base64-encodes `[]byte` fields |
+| Ping handling | Receives `{"type": "ping"}` → replies `{"type": "pong"}` |
+| ACK handling | Receives `{"type": "ack"}` → logs debug |
+| Read deadline | 60 seconds (`SetReadDeadline`) |
+| Reconnect | Exponential backoff: 1s → 60s max, with jitter |
+| Frame polling | 100ms ticker, drains disk buffer |
+| Frame removal | Removes from buffer immediately after send (no wait for ACK) |
+
+### Android Client (`android-bootstrap/.../transport/WebSocketTransport.kt`)
+
+| Aspect | Behavior |
+|--------|----------|
+| Connect URL | `ws://host:port/ws?name=<clientName>` (query param) |
+| Library | `okhttp` (v4.12.0) WebSocket |
+| Hello msg | `{"type": "hello", "name": "...", "version": "0.1.0"}` |
+| Frame msg | `{"type": "frame", "filename": "...", "timestamp": <unix_millis>, "data": "<base64_string>"}` |
+| Data encoding | Explicit `java.util.Base64.getEncoder().encodeToString(data)` |
+| Ping handling | Receives `{"type": "ping"}` → replies `{"type": "pong"}` |
+| ACK handling | Receives `{"type": "ack", "filename": "..."}` → logs with filename |
+| Keepalive | OkHttp auto-pings every 30s (`pingInterval`) |
+| Reconnect | Exponential backoff: 1s → 60s max |
+| Frame polling | 500ms delay, drains disk buffer |
+| Frame removal | Removes from buffer only after successful `send()` |
+
+---
+
+## Differences
+
+1. **Timestamp units**
+   - Go: `time.Now().Unix()` → **seconds** since epoch
+   - Android: `System.currentTimeMillis()` → **milliseconds** since epoch
+   - Server must detect and handle both (see heuristic in server.py)
+
+2. **Data encoding path**
+   - Go: `json.Marshal([]byte)` → implicit base64 via Go stdlib
+   - Android: `Base64.getEncoder().encodeToString()` → explicit base64
+   - Result is identical at the wire: a JSON string containing base64 data
+
+3. **Frame polling cadence**
+   - Go: 100ms (aggressive)
+   - Android: 500ms (conservative)
+
+4. **Keepalive mechanism**
+   - Go: relies on server sending messages or read deadline (60s)
+   - Android: OkHttp sends WebSocket ping frames every 30s automatically
+   - Both respond to application-level `{"type": "ping"}` JSON messages
+
+5. **Post-send behavior**
+   - Go: removes frame from buffer immediately (fire-and-forget)
+   - Android: removes only after `send()` returns true
+   - Both expect server ACK but do not block on it
+
+---
+
+## Commonalities (Server Contract)
+
+These are the protocol elements the server MUST support:
+
+1. **Endpoint**: `GET /ws` with optional `?name=<clientName>` query parameter
+2. **Text frames only**: Both clients send JSON as WebSocket text messages
+3. **Hello message**: `{"type": "hello", "name": "...", "version": "0.1.0"}`
+4. **Frame message**: `{"type": "frame", "timestamp": <int>, "filename": "...", "data": "<base64>"}`
+5. **Server ping**: `{"type": "ping"}` — expect `{"type": "pong"}` reply
+6. **Server ack**: `{"type": "ack", "filename": "..."}` — acknowledge frame receipt
+7. **Auto-reconnect**: Both clients reconnect automatically on any disconnect
+8. **Payload**: JPEG image data, base64-encoded inside JSON
+
+---
+
+## Server Design Decisions
+
+- **No image storage**: Decode base64 to verify integrity and compute size, then discard.
+- **Timestamp normalization**: Detect seconds vs milliseconds, convert to datetime.
+- **Periodic ping**: Send `{"type": "ping"}` every 30s to keep Go client alive.
+- **Client tracking**: Maintain a set of connected clients with names.
+- **Graceful shutdown**: Handle SIGINT / SIGTERM, close all connections cleanly.
+- **Configurability**: Host and port via CLI arguments.
+- **Python version**: 3.11+ recommended (modern `asyncio`, `TaskGroup`, type hints).
+- **Library**: `websockets` — the standard, battle-tested Python WebSocket library.
